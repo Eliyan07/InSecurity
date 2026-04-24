@@ -1,48 +1,78 @@
 # InSecurity
 
-InSecurity е десктоп антивирусен проект с Rust/Tauri backend и React/TypeScript frontend.
-Приложението комбинира сигнатурно сканиране, евристични проверки, ML оценяване чрез ONNX, репутационни справки, управление на карантина и наблюдение в реално време в десктоп среда, насочена към Windows.
+InSecurity е десктоп антивирусно приложение с многоетапна детекция на заплахи, ML класификация, проверка на цифров подпис и по избор CPU емулация за пакетирани двоични файлове.
 
-## Технологичен стек
+Проектът е изграден с **Rust/Tauri 2** за backend и **React 19 + TypeScript** за frontend.
+
+## Основни Възможности
+
+| Възможност | Описание |
+|------------|----------|
+| **Наблюдение в реално време** | Event-driven file watcher и process monitor за автоматично сканиране |
+| **Видове сканиране** | Quick, Full, Custom и Scheduled scan режими |
+| **Многоетапна детекция** | Signature -> Ingestion -> Static -> ML -> Reputation -> Novelty -> Behavior -> Emulation |
+| **Проверка на цифров подпис** | Trusted signed PE файлове могат да приключат рано като clean |
+| **ML класификация** | LightGBM модел, експортиран до ONNX и изпълняван през Rust ONNX Runtime с 2381 EMBER features |
+| **Novelty detection** | IsolationForest модел, експортиран до ONNX и оценяващ 42 PE behavioral features |
+| **Криптирана карантина** | AES-256-GCM с Argon2 key derivation |
+| **Ransomware shield** | Наблюдение на protected folders, thresholds за масови промени и canary files |
+| **Threat intelligence** | Hash lookup през VirusTotal, MalwareBazaar и импорт на custom JSON threat feed |
+| **Audit и tamper protection** | Signed exclusions, проверка на YARA rule signatures и append-only audit log |
+| **Паралелни worker-и** | Конфигурируеми 1-16 scan worker-и при ръчно сканиране |
+
+## Pipeline За Откриване
+
+1. **Pre-scan checks**
+   Проверка за exclusions, trusted paths и ранна signature verification.
+2. **Ingestion**
+   Изчисляване на hashes, metadata extraction, entropy checks и basic file profiling.
+3. **Static analysis**
+   YARA rules, blacklist lookup и PE/header heuristics.
+4. **ML classification**
+   EMBER feature extraction и ONNX inference за malware probability.
+5. **Reputation scoring**
+   Reputation lookup по hash и допълнителни външни сигнали.
+6. **Novelty detection**
+   Откриване на необичайни PE поведенчески patterns чрез IsolationForest.
+7. **Behavioral analysis**
+   String/import patterns, suspicious API combinations и byte-level heuristics.
+8. **CPU emulation**
+   По избор, за packed unsigned binaries чрез Unicorn Engine.
+
+След тези етапи се изчислява финалната оценка и се връща verdict:
+
+- `Clean`
+- `Suspicious`
+- `Malware`
+
+При открита заплаха приложението може да карантинира файла и да го запише в локалната SQLite база.
+
+## Технологичен Стек
 
 - Backend: Rust, Tauri 2, Tokio, SQLite, YARA-X
 - Frontend: React 19, TypeScript, Vite, Vitest
 - ML runtime: ONNX Runtime през Rust
-- Offline ML инструменти: Python
+- Offline ML tooling: Python
 
-## Какво Прави
+## Стартиране От Source
 
-- Сканира файлове с многоетапен pipeline за откриване
-- Използва YARA правила, hash проверки, евристики и ML предсказания
-- Поддържа бързо, пълно, персонализирано и планирано сканиране
-- Следи системата в реално време за нови или променени файлове
-- Поставя подозрителните файлове под карантина и проследява действията по тях
-- Съхранява резултати от сканиране, обратна връзка и threat intelligence данни в SQLite
-- Изтегля threat intelligence данни от MalwareBazaar
-- Поддържа импорт на собствени JSON threat feed файлове към локалната база с разузнавателни данни
+### Изисквания
 
-## Структура На Проекта
+| Зависимост | Предназначение |
+|------------|----------------|
+| **Rust** | Компилация на backend частта |
+| **Node.js** | Frontend build и Tauri dev workflow |
+| **Visual Studio Build Tools** | Полезни за Windows native builds |
+| **LLVM/Clang + CMake** | Нужни само ако ще се компилира с `--features emulation` |
+| **Python** | По избор, само за offline ML tooling и Python-side тестове |
 
-```text
-.
-|- src/                     Frontend React приложение
-|- src-tauri/               Rust backend и Tauri приложение
-|- python/                  Offline инструменти и тестове за модели
-|- resources/               Модели, YARA правила и bundled данни
-|- public/                  Статични frontend ресурси
-|- package.json             Frontend скриптове
-|- README.md
-```
+Важно:
 
-Основни backend модули:
+- Python не е нужен за runtime сканиране.
+- ONNX моделите и YARA ресурсите вече са налични в `resources/`.
+- Старото описание с bundled Python runtime и conversion scripts вече не е актуално за този вариант на проекта.
 
-- `src-tauri/src/core/pipeline.rs`: основна оркестрация на откриването
-- `src-tauri/src/core/update_manager.rs`: обновяване на threat intelligence данни и импорт на feed източници
-- `src-tauri/src/core/threat_feed.rs`: нормализирано парсване и мапване на threat feed записи
-- `src-tauri/src/core/static_scanner.rs`: blacklist и статична логика за откриване
-- `src-tauri/src/core/quarantine_manager.rs`: управление на криптирана карантина
-
-## Разработка
+### Инсталация И Стартиране
 
 Инсталиране на frontend зависимостите:
 
@@ -50,23 +80,23 @@ InSecurity е десктоп антивирусен проект с Rust/Tauri b
 npm install
 ```
 
-Стартиране само на frontend частта:
-
-```bash
-npm run dev
-```
-
-Стартиране на десктоп приложението:
+Стартиране на приложението в dev режим:
 
 ```bash
 npm run tauri dev
 ```
 
-Проверка на Rust backend-а:
+Production build:
+
+```bash
+npm run tauri build
+```
+
+Ако искаш build с CPU емулация:
 
 ```bash
 cd src-tauri
-cargo check
+cargo build --features emulation
 ```
 
 ## Тестване
@@ -90,44 +120,62 @@ cd src-tauri
 cargo test --lib -- --test-threads=1
 ```
 
-Тестове за Python инструментите:
+Optional Python tooling tests:
 
 ```bash
 python -m pytest python/tests/test_model_security.py
 ```
 
-## Бележки За ML
+## Структура На Проекта
 
-- Runtime inference се изпълнява в Rust чрез ONNX Runtime.
-- Директорията `python/` се използва за offline инструменти, подписване и тестове, свързани с моделите.
-- Десктоп приложението не разчита на вграден Python runtime за inference.
-
-## Бележки За Threat Intelligence
-- Обновяването от MalwareBazaar се обработва от Rust backend-а.
-- Собствени JSON feed файлове могат да бъдат нормализирани чрез `ThreatEntry` и импортирани в същите локални таблици за threat intelligence.
-- Импортираните записи се отразяват и в blacklist-а, използван от статичния скенер.
-
-Очакван JSON формат за собствен threat feed:
-
-```json
-[
-  {
-    "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "name": "AsyncRAT",
-    "severity": "high",
-    "family": "RAT",
-    "first_seen": 1710000000
-  }
-]
+```text
+.
+|- src/                     React frontend
+|- src-tauri/               Rust backend и Tauri приложение
+|- python/                  Offline ML tooling
+|- training_data/           Training features и междинни model artifacts
+|- resources/               ONNX модели, YARA правила, whitelists и помощни ресурси
+|- public/                  Статични frontend assets
+|- package.json
+`- README.md
 ```
 
-## Хигиена На Хранилището
+Ключови backend файлове:
 
-- Локални artifact папки като `tmp/` и `output/` са игнорирани.
-- Build изходи като `node_modules/`, `dist/` и `target/` са игнорирани.
-- Изходът от Python model-security CLI е само с ASCII символи за по-чисти логове и терминален изход.
+- `src-tauri/src/core/pipeline.rs` - основен detection pipeline
+- `src-tauri/src/core/update_manager.rs` - threat intelligence updates и feed ingestion
+- `src-tauri/src/core/threat_feed.rs` - нормализация на custom threat feed записи
+- `src-tauri/src/core/quarantine_manager.rs` - криптирана карантина
+- `src-tauri/src/core/tamper_protection.rs` - audit log и tamper-evident защита
+- `src-tauri/src/core/real_time.rs` - real-time protection и ransomware monitoring
+- `src-tauri/src/ml/onnx_classifier.rs` - ONNX classifier inference
+- `src-tauri/src/ml/onnx_novelty.rs` - ONNX novelty detector inference
 
-## Бележки
+## ML И Сигурност
 
-- Проектът е ориентиран към Windows, защото част от детекцията и сигнатурните функции зависят от специфично за Windows поведение.
-- Поддръжката за CPU emulation е по избор и се управлява чрез Rust feature-а `emulation`.
+### Classifier
+
+- Използва 2381 EMBER features
+- Работи през `resources/models/classifier/model.onnx`
+- Прагове по подразбиране: `0.90` за malware и `0.35` за suspicious
+
+### Novelty Detector
+
+- Използва 42 behavioral PE features
+- Работи през `resources/models/novelty/model.onnx`
+- Допълва класическия classifier с аномалийно откриване
+
+### Quarantine И Integrity
+
+- Карантината използва AES-256-GCM
+- Ключът се извежда чрез Argon2 или се държи през OS keyring/file fallback
+- Exclusions и audit events се подписват за tamper evidence
+- YARA rule signatures се валидират при зареждане
+
+## Допълнителни Бележки
+
+- Проектът е ориентиран основно към Windows.
+- Част от signature verification, trusted path logic, autostart и network monitoring са Windows-specific.
+- `python/` е помощна директория за offline model tooling, а не част от основния runtime.
+- Наличието на `resources/python_runtime/` е legacy остатък от по-стар packaging подход, но текущите build-ове не разчитат на него за runtime inference.
+- `training_data/` е за експерименти и междинни training артефакти, не за production runtime.
