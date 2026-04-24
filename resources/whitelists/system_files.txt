@@ -1,0 +1,17 @@
+# InSecurity Whitelist - Known Safe System Files
+# 
+# This is a placeholder file. On first launch, the app will automatically
+# generate a whitelist of your actual Windows system file hashes and store
+# it in: %APPDATA%/insecurity/whitelists/system_files.txt
+#
+# The generated whitelist includes:
+# - Windows System32 DLLs (kernel32, ntdll, user32, etc.)
+# - Command line tools (cmd.exe, powershell.exe)
+# - Windows services (svchost, services, lsass)
+# - Windows utilities (explorer, notepad, taskmgr)
+# - Windows Defender executables
+# - .NET Framework runtime files
+#
+# You can also manually add hashes of trusted applications here.
+# Format: One SHA256 hash per line (lowercase)
+#

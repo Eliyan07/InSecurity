@@ -1,0 +1,52 @@
+{
+  "$schema": ".schema.json",
+  "productName": "InSecurity",
+  "version": "1.0.10",
+  "identifier": "com.insecurity.antivirus",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node ./node_modules/vite/bin/vite.js build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "InSecurity",
+        "width": 800,
+        "height": 600
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "../resources/models/classifier/model.onnx": "resources/models/classifier/model.onnx",
+      "../resources/models/novelty/model.onnx": "resources/models/novelty/model.onnx",
+      "../resources/whitelists/system_files.txt": "resources/whitelists/system_files.txt",
+      "../resources/yara_rules/heuristic/*.yar": "resources/yara_rules/heuristic/",
+      "../resources/yara_rules/heuristic/*.yar.sig": "resources/yara_rules/heuristic/",
+      "../resources/yara_rules/strict/*.yar": "resources/yara_rules/strict/",
+      "../resources/yara_rules/strict/*.yar.sig": "resources/yara_rules/strict/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "both",
+        "installerHooks": "./installer-hooks.nsh"
+      }
+    }
+  }
+}

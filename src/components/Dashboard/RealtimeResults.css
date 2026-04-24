@@ -1,0 +1,594 @@
+.realtime-results {
+  margin-top: 1.5rem;
+}
+
+.realtime-results-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.results-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 0.5rem;
+  background: var(--danger);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 12px;
+}
+
+.results-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem;
+  margin-bottom: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.results-warning svg {
+  flex-shrink: 0;
+}
+
+/* Backdrop overlay when a card is expanded */
+.results-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  cursor: pointer;
+}
+
+.results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 600px;
+  overflow-y: auto;
+  overflow-x: visible;
+  padding-right: 0.5rem;
+}
+
+.result-item {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  transition: all 0.15s ease;
+  overflow: visible;
+  min-height: 60px;
+  position: relative;
+  z-index: 1;
+}
+
+.result-item:hover {
+  box-shadow: var(--shadow-md);
+  z-index: 2;
+}
+
+.result-item.verdict-malware:hover,
+.result-item.verdict-malware.expanded {
+  border-color: var(--danger);
+}
+
+.result-item.verdict-suspicious:hover,
+.result-item.verdict-suspicious.expanded,
+.result-item.verdict-pup:hover,
+.result-item.verdict-pup.expanded {
+  border-color: var(--warning);
+}
+
+.result-item.expanded {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  overflow: visible;
+  z-index: 10;
+  position: relative;
+}
+
+/* Dim non-expanded cards when one is expanded */
+.results-list.has-expanded .result-item:not(.expanded) {
+  opacity: 0.3;
+  pointer-events: none;
+  filter: blur(1px);
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.results-list.has-expanded .result-item.expanded {
+  opacity: 1;
+  filter: none;
+}
+
+.result-item.verdict-malware {
+  border-left: 4px solid var(--danger);
+}
+
+.result-item.verdict-suspicious,
+.result-item.verdict-pup {
+  border-left: 4px solid var(--warning);
+}
+
+.verdict-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.verdict-badge.verdict-malware {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.verdict-badge.verdict-suspicious,
+.verdict-badge.verdict-pup {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.verdict-badge.verdict-clean {
+  background: rgba(10, 241, 171, 0.15);
+  color: var(--accent-primary);
+}
+
+.result-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.result-filename {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-threat {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.result-confidence {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.result-expand-icon {
+  color: var(--text-muted);
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.result-item.verdict-malware.expanded .result-expand-icon {
+  opacity: 1;
+  color: var(--danger);
+}
+
+.result-item.verdict-suspicious.expanded .result-expand-icon,
+.result-item.verdict-pup.expanded .result-expand-icon {
+  opacity: 1;
+  color: var(--warning);
+}
+
+/* Result Main (clickable header) */
+.result-main {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+  padding: 1rem 1.25rem;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+
+.result-main:hover {
+  background: var(--bg-tertiary);
+}
+
+.result-item.verdict-malware.expanded .result-main {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.result-item.verdict-suspicious.expanded .result-main,
+.result-item.verdict-pup.expanded .result-main {
+  background: rgba(245, 158, 11, 0.06);
+}
+
+/* Expanded Content */
+.result-expanded {
+  padding: 1.25rem;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border-color);
+  border-radius: 0 0 10px 10px;
+  position: relative;
+  z-index: 10;
+}
+
+.result-path {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.path-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.path-value {
+  color: var(--text-primary);
+  word-break: break-all;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+/* Action Buttons */
+.result-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.action-btn.quarantine {
+  background: rgba(10, 241, 171, 0.10);
+  color: var(--accent-primary);
+  border-color: rgba(10, 241, 171, 0.25);
+}
+
+.action-btn.quarantine:hover:not(:disabled) {
+  background: rgba(10, 241, 171, 0.20);
+}
+
+.action-btn.delete {
+  background: rgba(239, 68, 68, 0.10);
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.action-btn.delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.20);
+}
+
+.action-btn.ignore {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.action-btn.ignore:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.action-btn.details {
+  grid-column: 1 / -1;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  font-size: 0.8rem;
+  padding: 0.625rem 1rem;
+}
+
+.action-btn.details:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+  background: var(--bg-tertiary);
+}
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner.large {
+  width: 32px;
+  height: 32px;
+  border-width: 3px;
+  border-color: var(--border-color);
+  border-top-color: var(--accent-primary);
+}
+
+/* Result Info */
+.result-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  font-size: 0.875rem;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.info-item strong {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+/* Error */
+.results-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.error-dismiss {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+
+.error-dismiss:hover {
+  opacity: 0.7;
+}
+
+/* Minimal Empty State (below hero) */
+.realtime-results-minimal {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+  background: var(--bg-secondary);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+}
+
+.realtime-results-minimal svg {
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+.realtime-results-minimal p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .result-actions {
+    grid-template-columns: 1fr;
+  }
+  
+  .result-info {
+    flex-direction: column;
+    gap: 1rem;
+  }
+  
+  .result-main::after {
+    display: none;
+  }
+}
+
+/* False positive hint */
+.fp-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.875rem;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.fp-hint svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--warning);
+}
+
+/* Detail Panel Modal Overlay */
+.detail-panel-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 2rem;
+}
+
+.detail-panel-container {
+  width: 100%;
+  max-width: 800px;
+  max-height: 90vh;
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+.detail-panel-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.detail-panel-loading p {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+/* Threat name tag styling */
+.threat-name-tag {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+}
+
+/* Threat level badges */
+.level-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.level-badge.level-high {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.level-badge.level-medium {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.level-badge.level-low {
+  background: rgba(10, 241, 171, 0.15);
+  color: var(--accent-primary);
+}
+
+/* Quick Analysis Summary */
+.quick-analysis-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.analysis-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.analysis-badge svg {
+  flex-shrink: 0;
+}
+
+.analysis-badge.yara {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.analysis-badge.reputation {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.analysis-badge.ml {
+  background: rgba(68, 209, 176, 0.12);
+  color: var(--accent-secondary);
+  border: 1px solid rgba(68, 209, 176, 0.25);
+}
+
+.analysis-badge.behavior {
+  background: rgba(249, 115, 22, 0.12);
+  color: var(--severity-high);
+  border: 1px solid rgba(249, 115, 22, 0.25);
+}
+
+.analysis-badge.unsigned {
+  background: rgba(100, 116, 139, 0.12);
+  color: var(--text-muted);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+}

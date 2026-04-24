@@ -1,0 +1,1151 @@
+.custom-path-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.custom-path-input input {
+  min-width: 0;
+  flex: 1 1 180px;
+  max-width: 100%;
+}
+
+.custom-path-input .btn-browse,
+.custom-path-input .btn-scan-custom {
+  flex: 0 0 auto;
+  min-width: 40px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 600px) {
+  .custom-path-input {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+  .custom-path-input input,
+  .custom-path-input .btn-browse,
+  .custom-path-input .btn-scan-custom {
+    width: 100%;
+    min-width: 0;
+  }
+}
+.scanner {
+  padding: 0;
+}
+
+.scanner-header {
+  margin-bottom: 1.5rem;
+}
+
+.scanner-header h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.scanner-description {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+/* Scan Progress Card */
+.scan-progress-card {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.scan-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.scan-progress-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.scanning-indicator {
+  width: 12px;
+  height: 12px;
+  background: var(--primary);
+  border-radius: 50%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.9); }
+}
+
+.btn-cancel {
+  padding: 0.5rem 1rem;
+  background: var(--danger);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cancel:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.scan-progress-bar {
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+
+.scan-progress-fill {
+  height: 100%;
+  background: var(--accent-gradient);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+  min-width: 2px;
+  box-shadow: 0 0 8px rgba(10, 241, 171, 0.3);
+}
+
+.scan-progress-fill.indeterminate {
+  width: 30% !important;
+  animation: indeterminate-progress 1.5s ease-in-out infinite;
+}
+
+@keyframes indeterminate-progress {
+  0% { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+
+.progress-files.collecting {
+  color: var(--text-primary);
+  font-style: italic;
+}
+
+.scan-progress-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 1rem;
+}
+
+.scan-current-file {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.current-file-label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.current-file-path {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scan-live-counts {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.count-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.count-item.clean { color: var(--success); }
+.count-item.suspicious { color: var(--warning); }
+.count-item.malware { color: var(--danger); }
+.count-item.skipped { color: var(--text-muted); }
+
+/* Scan Summary Card */
+.scan-summary-card {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.summary-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.summary-title-row div {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-icon.warning { color: var(--warning); }
+.summary-icon.clean { color: var(--success); }
+
+.summary-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.summary-type {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.summary-stats {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  min-width: 80px;
+  flex: 1;
+}
+
+.summary-stat .stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.summary-stat .stat-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.summary-stat.clean .stat-value { color: var(--success); }
+.summary-stat.suspicious .stat-value { color: var(--warning); }
+.summary-stat.malware .stat-value { color: var(--danger); }
+.summary-stat.skipped .stat-value { color: var(--text-muted); }
+
+.summary-warning {
+  margin: 0;
+  padding: 0.75rem;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 8px;
+  color: var(--warning);
+  font-size: 0.9rem;
+}
+
+.summary-success {
+  margin: 0;
+  padding: 0.75rem;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 8px;
+  color: var(--success);
+  font-size: 0.9rem;
+}
+
+/* Status messages in scan completion */
+.summary-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.summary-status.clean {
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--success);
+}
+
+.summary-status.quarantined {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--info-blue);
+}
+
+.scan-complete-view .scan-threats-card {
+  margin-top: 0;
+}
+
+/* Summary Action Buttons */
+.summary-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.btn-new-scan {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(10, 241, 171, 0.10);
+  color: var(--accent-primary);
+  border: 1px solid rgba(10, 241, 171, 0.25);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-new-scan:hover {
+  background: rgba(10, 241, 171, 0.20);
+}
+
+.btn-new-scan svg {
+  opacity: 0.9;
+}
+
+.btn-export-report {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-export-report:hover {
+  background: var(--bg-tertiary);
+}
+
+.btn-export-report svg {
+  opacity: 0.7;
+}
+
+/* Detected Threats Card */
+.scan-threats-card {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Auto-quarantined variant */
+.scan-threats-card.auto-quarantined {
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.scan-threats-card.auto-quarantined .threats-header h3 {
+  color: var(--success);
+}
+
+.scan-threats-card.auto-quarantined .threats-header h3 svg {
+  color: var(--success);
+}
+
+.threat-item.resolved {
+  opacity: 0.85;
+}
+
+.threat-status-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.threat-status-badge.quarantined {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--info-blue);
+}
+
+.threat-status-badge.deleted {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+}
+
+.threat-status-badge.whitelisted {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+}
+
+.threat-status-badge svg {
+  flex-shrink: 0;
+}
+
+.threats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.threats-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.threats-header h3 svg {
+  color: var(--danger);
+}
+
+.btn-quarantine-all {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(10, 241, 171, 0.10);
+  color: var(--accent-primary);
+  border: 1px solid rgba(10, 241, 171, 0.25);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-quarantine-all:hover:not(:disabled) {
+  background: rgba(10, 241, 171, 0.20);
+}
+
+.btn-quarantine-all:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.threats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.threat-item {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.threat-item:hover {
+  border-color: var(--primary-dim);
+}
+
+.threat-item.verdict-malware {
+  border-left: 3px solid var(--danger);
+}
+
+.threat-item.verdict-suspicious {
+  border-left: 3px solid var(--warning);
+}
+
+.threat-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.threat-name {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.threat-badge {
+  padding: 0.125rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.threat-badge.verdict-malware {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.threat-badge.verdict-suspicious {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.threat-filename {
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-path {
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threat-type {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.threat-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+.btn-threat-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-threat-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-threat-action.quarantine {
+  background: rgba(10, 241, 171, 0.10);
+  color: var(--accent-primary);
+  border-color: rgba(10, 241, 171, 0.25);
+}
+
+.btn-threat-action.quarantine:hover:not(:disabled) {
+  background: rgba(10, 241, 171, 0.20);
+}
+
+.btn-threat-action.delete {
+  background: rgba(239, 68, 68, 0.10);
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.btn-threat-action.delete:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.20);
+}
+
+.btn-threat-action.ignore {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.btn-threat-action.ignore:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Scan Error */
+.scan-error {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 10px;
+  color: var(--danger);
+  margin-bottom: 1.5rem;
+}
+
+.scan-error svg {
+  flex-shrink: 0;
+}
+
+.scan-error span {
+  flex: 1;
+}
+
+.error-dismiss {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.btn-reset-scan {
+  padding: 0.4rem 0.75rem;
+  background: var(--warning);
+  color: var(--bg-tertiary);
+  border: none;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-reset-scan:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+/* Scan Options */
+.scan-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.scan-card {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  position: relative;
+}
+
+.scan-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.scan-card.quick:hover { border-color: var(--success); }
+.scan-card.full:hover { border-color: var(--primary); }
+.scan-card.custom:hover { border-color: var(--warning); }
+
+.scan-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+}
+
+.scan-card.quick .scan-card-icon { color: var(--success); }
+.scan-card.full .scan-card-icon { color: var(--primary); }
+.scan-card.custom .scan-card-icon { color: var(--warning); }
+
+.scan-card-content h3 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.scan-card-content p {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.scan-targets {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.scan-targets li {
+  padding: 0.125rem 0;
+}
+
+.scan-targets li::before {
+  content: "•";
+  margin-right: 0.5rem;
+  color: var(--text-muted);
+}
+
+.scan-card-time {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+/* Custom Path Input */
+.custom-path-input {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.custom-path-input input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  font-family: var(--font-mono);
+}
+
+.custom-path-input input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.btn-scan-custom {
+  padding: 0.5rem 1rem;
+  background: var(--warning);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-scan-custom:hover {
+  filter: brightness(1.1);
+}
+
+.btn-browse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-browse:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--bg-secondary);
+}
+
+/* ============================================
+   Scheduled Scans Section
+   ============================================ */
+
+.scheduled-scans-section {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.scheduled-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.scheduled-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.scheduled-header h3 svg {
+  color: var(--primary);
+}
+
+/* Scheduled Scan Cards Grid */
+.scheduled-scan-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+/* Schedule Card Styling */
+.scan-card.schedule-card {
+  min-height: 180px;
+  position: relative;
+}
+
+.scan-card.schedule-card.add-schedule {
+  border-style: dashed;
+  border-color: var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.scan-card.schedule-card.add-schedule:hover:not(.active) {
+  border-color: var(--primary);
+  background: var(--bg-tertiary);
+}
+
+.scan-card.schedule-card.add-schedule.active {
+  cursor: default;
+  border-style: solid;
+  border-color: var(--primary);
+  min-height: auto;
+  padding: 1rem;
+}
+
+.scan-card.schedule-card.add-schedule .scan-card-icon svg {
+  color: var(--primary);
+}
+
+/* Existing Schedule Cards */
+.scan-card.existing-schedule {
+  position: relative;
+}
+
+.scan-card.existing-schedule.disabled {
+  opacity: 0.5;
+}
+
+.scan-card.existing-schedule.disabled .scan-card-content h3,
+.scan-card.existing-schedule.disabled .schedule-frequency-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
+
+.scan-card.existing-schedule .scan-card-icon {
+  position: relative;
+}
+
+.schedule-status-indicator {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-secondary);
+}
+
+.schedule-status-indicator.enabled {
+  background: var(--success);
+}
+
+.schedule-status-indicator.disabled {
+  background: var(--text-muted);
+}
+
+.schedule-frequency-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.schedule-path-text {
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin: 0.25rem 0 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-timing {
+  margin-top: 0.5rem;
+}
+
+.next-run-badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  background: rgba(10, 241, 171, 0.10);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: var(--primary);
+  font-weight: 500;
+}
+
+/* Schedule Card Actions */
+.schedule-card-actions {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 0.375rem;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.scan-card.schedule-card:hover .schedule-card-actions {
+  opacity: 1;
+}
+
+.btn-schedule-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-schedule-action:hover {
+  background: var(--bg-primary);
+}
+
+.btn-schedule-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-schedule-action.run:hover:not(:disabled) {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.btn-schedule-action.toggle:hover {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.btn-schedule-action.toggle.enabled {
+  color: var(--success);
+}
+
+.btn-schedule-action.delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Inline Schedule Form */
+.schedule-form-inline {
+  width: 100%;
+}
+
+.schedule-form-inline .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-bottom: 0.75rem;
+}
+
+.schedule-form-inline .form-row label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.schedule-form-inline .form-row input,
+.schedule-form-inline .form-row select {
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.schedule-form-inline .form-row input:focus,
+.schedule-form-inline .form-row select:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.schedule-form-inline .form-row input[type="time"] {
+  font-family: var(--font-mono);
+}
+
+.schedule-form-inline .form-row input[type="number"] {
+  width: 80px;
+}
+
+.form-row-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.schedule-form-inline .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.btn-cancel-schedule {
+  padding: 0.5rem 1rem;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cancel-schedule:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.schedule-form-inline .btn-create-schedule {
+  padding: 0.5rem 1rem;
+  background: var(--success);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.schedule-form-inline .btn-create-schedule:hover {
+  filter: brightness(1.1);
+}
+
+.schedule-error {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: var(--danger);
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.schedule-error button {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .summary-stats {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .summary-stat {
+    flex: 1 1 calc(50% - 0.375rem);
+    min-width: 80px;
+  }
+
+  .threat-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .threat-actions {
+    grid-template-columns: 1fr;
+  }
+}
+

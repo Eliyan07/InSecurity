@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "description": "ML classification thresholds for LightGBM malware detector",
+  "thresholds": {
+    "malware": 0.90,
+    "suspicious": 0.35,
+    "clean": 0.35
+  },
+  "stage_weights": {
+    "static_analysis": 0.35,
+    "ml_classification": 0.40,
+    "novelty_detection": 0.10,
+    "reputation_behavior": 0.15
+  },
+  "ember_config": {
+    "num_features": 2381,
+    "schema_version": "2018",
+    "model_format": "lightgbm"
+  },
+  "calibration": {
+    "method": "isotonic",
+    "enabled": true
+  },
+  "false_positive_targets": {
+    "fpr_at_99_recall": 0.001,
+    "fpr_at_95_recall": 0.0001
+  }
+}

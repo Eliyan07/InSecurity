@@ -1,0 +1,42 @@
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.30);
+  border-radius: 8px;
+  color: var(--danger, #dc3545);
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+  position: relative;
+}
+
+.error-banner-icon {
+  display: flex;
+  align-items: center;
+  color: var(--danger, #dc3545);
+}
+
+.error-banner-message {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.error-banner-dismiss {
+  background: none;
+  border: none;
+  color: var(--danger, #dc3545);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0 0.5rem;
+  line-height: 1;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.error-banner-dismiss:hover {
+  opacity: 1;
+}
+

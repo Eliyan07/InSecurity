@@ -1,0 +1,27 @@
+{
+  "model_version": "1.0.0",
+  "description": "Isolation Forest novelty detector for zero-day malware detection",
+  "model_type": "isolation_forest",
+  "files": {
+    "model": "model.joblib",
+    "scaler": "scaler.pkl",
+    "features": "features.json",
+    "threshold": "threshold.json",
+    "training_stats": "training_stats.json"
+  },
+  "parameters": {
+    "n_estimators": 300,
+    "contamination": 0.005,
+    "max_samples": 256,
+    "threshold": -0.5,
+    "random_state": 42
+  },
+  "training": {
+    "trained_on": "benign_samples_only",
+    "feature_schema": "behavioral_pe",
+    "num_features": 42,
+    "num_samples": 26033,
+    "trained_at": "2026-01-18T00:12:02.525323"
+  },
+  "notes": "Trained on 26,033 benign PE samples with 42 behavioral features. Use python/training/train_novelty.py to retrain."
+}

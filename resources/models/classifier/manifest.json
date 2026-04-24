@@ -1,0 +1,45 @@
+{
+  "model_version": "1.0.0-ember",
+  "created_at": "2026-01-17T11:44:35.350298",
+  "training_metrics": {
+    "auc": 0.9972352791264141,
+    "average_precision": 0.9986230458953762,
+    "log_loss": 0.07179743579848397,
+    "best_threshold": 0.6332209513249649,
+    "best_f1": 0.9832861668948275,
+    "precision_at_best_f1": 0.984691405871524,
+    "recall_at_best_f1": 0.9818849330950196,
+    "fpr_at_95pct_recall": 0.004511502838362713,
+    "fpr_at_99pct_recall": 0.3901404242605318
+  },
+  "evaluation_metrics": {
+    "auc_roc": 0.9970529168998314,
+    "auc_pr": 0.9985497306869542,
+    "log_loss": 0.0744826504213504,
+    "optimal_threshold": 0.6332209513249649,
+    "precision": 0.9842067191769812,
+    "recall": 0.9811902806434166,
+    "f1": 0.9826961850857724,
+    "fpr_at_90_recall": 0.0012811817017107543,
+    "fpr_at_95_recall": 0.004898635918305826,
+    "fpr_at_99_recall": 0.06914613007762453,
+    "fpr_at_999_recall": 0.4132187806164745,
+    "true_positives": 48982,
+    "true_negatives": 25752,
+    "false_positives": 786,
+    "false_negatives": 939,
+    "total_samples": 76459,
+    "malware_samples": 49921,
+    "clean_samples": 26538,
+    "model_path": "models\\lgbm_20260117_114423\\model.txt",
+    "evaluated_at": "2026-01-17T11:44:35.323874"
+  },
+  "files": {
+    "model": "model.txt",
+    "model_binary": "model.bin",
+    "calibrator": "calibrator.pkl",
+    "config": "config.json"
+  },
+  "schema_version": "ember",
+  "num_features": 2381
+}

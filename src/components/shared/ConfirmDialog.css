@@ -1,0 +1,112 @@
+/* Confirm Dialog - matches InSecurity dark theme */
+
+.confirm-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.confirm-dialog {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 0.3s ease-out;
+}
+
+.confirm-dialog-header {
+  padding: 1.25rem 1.5rem 0;
+}
+
+.confirm-dialog-header h3 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.confirm-dialog-body {
+  padding: 0.75rem 1.5rem 0;
+}
+
+.confirm-dialog-body p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.confirm-dialog .btn-cancel {
+  padding: 0.625rem 1rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.confirm-dialog .btn-cancel:hover {
+  background: var(--border-color);
+  color: var(--text-primary);
+}
+
+.confirm-dialog .btn-confirm {
+  padding: 0.625rem 1.25rem;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: white;
+}
+
+.confirm-dialog .btn-confirm:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+/* Variant: default (accent green) */
+.confirm-dialog .btn-confirm.variant-default {
+  background: var(--accent-primary);
+}
+
+/* Variant: danger (red) */
+.confirm-dialog .btn-confirm.variant-danger {
+  background: var(--danger);
+}
+
+.confirm-dialog .btn-confirm.variant-danger:hover {
+  background: var(--danger-dark);
+}
+
+/* Variant: warning (amber) */
+.confirm-dialog .btn-confirm.variant-warning {
+  background: var(--warning);
+  color: #1a1a1a;
+}
+
+.confirm-dialog .btn-confirm.variant-warning:hover {
+  background: #d97706;
+}

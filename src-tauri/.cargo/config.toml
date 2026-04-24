@@ -1,0 +1,4 @@
+[env]
+# Build against the stable abi3 interface without requiring a local Python
+# interpreter executable. The shipped app still bundles python313.dll at runtime.
+PYO3_NO_PYTHON = "1"

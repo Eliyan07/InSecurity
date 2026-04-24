@@ -1,0 +1,91 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Environment variables
+.venv/
+.env
+.env.local
+.env.production
+.env.development
+
+# Python
+__pycache__/
+.pytest_cache/
+python/**/__pycache__/
+python/.pytest_cache/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Rust
+target/
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/schemas
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# Test coverage
+coverage/
+.vitest-results.json
+
+# Project specific
+__trash/
+training_data/samples/
+resources/database/
+resources/quarantine/vault/
+resources/python_runtime/
+resources/yara_rules/**/*.yar.sig
+tmp/
+output/
+
+.claude/
+src-tauri/.claude/

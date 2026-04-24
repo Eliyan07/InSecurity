@@ -1,0 +1,233 @@
+.quarantine-list {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+
+.quarantine-list.loading,
+.quarantine-list.empty {
+  padding: 1.5rem;
+}
+
+.quarantine-list.loading .quarantine-header,
+.quarantine-list.empty .quarantine-header {
+  margin-bottom: 1.5rem;
+}
+
+/* Loading State */
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 1rem;
+}
+
+/* Enhanced Empty State */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+.empty-state-icon {
+  color: var(--accent-primary);
+  margin-bottom: 1rem;
+  opacity: 0.8;
+}
+
+.empty-state h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.empty-state-hint {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.quarantine-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.quarantine-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.quarantine-count {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+}
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.quarantine-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.quarantine-table th {
+  background: var(--bg-tertiary);
+  padding: 1rem 1.25rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.quarantine-table td {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.quarantine-table tr:hover td {
+  background: var(--bg-tertiary);
+}
+
+.quarantine-table .file-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.quarantine-table .file-path {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quarantine-table .quarantine-date {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.quarantine-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-restore,
+.btn-delete {
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: all 0.15s ease;
+}
+
+.btn-restore {
+  background: rgba(10, 241, 171, 0.10);
+  color: var(--accent-primary);
+}
+
+.btn-restore:hover {
+  background: rgba(10, 241, 171, 0.20);
+  transform: translateY(-1px);
+}
+
+.btn-delete {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+}
+
+.btn-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  transform: translateY(-1px);
+}
+
+.threat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.threat-badge.high {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+}
+
+.threat-badge.medium {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.threat-badge.low {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--success);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .quarantine-table th,
+  .quarantine-table td {
+    padding: 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .quarantine-table .file-path {
+    max-width: 150px;
+  }
+
+  .quarantine-actions {
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+}
