@@ -1,7 +1,7 @@
 {
   "$schema": ".schema.json",
   "productName": "InSecurity",
-  "version": "1.0.10",
+  "version": "1.0.1",
   "identifier": "com.insecurity.antivirus",
   "build": {
     "beforeDevCommand": "npm run dev",
