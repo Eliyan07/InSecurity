@@ -83,7 +83,8 @@ training_data/samples/
 resources/database/
 resources/quarantine/vault/
 resources/python_runtime/
-resources/yara_rules/**/*.yar.sig
+# YARA rule signatures are required at runtime and in release bundles.
+!resources/yara_rules/**/*.yar.sig
 tmp/
 output/
 
