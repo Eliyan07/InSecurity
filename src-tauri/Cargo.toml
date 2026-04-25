@@ -1,6 +1,6 @@
 [package]
 name = "antivirus-ui"
-version = "1.0.1"
+version = "1.0.2"
 description = "InSecurity - Desktop Antivirus Application"
 authors = ["InSecurity Team"]
 edition = "2021"

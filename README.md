@@ -11,7 +11,7 @@ InSecurity е десктоп антивирусно приложение с мн
 1. Отвори страницата с готовите версии: [GitHub Releases](https://github.com/Eliyan07/InSecurity/releases)
 2. Отвори **най-новия release**
 3. В секцията **Assets** изтегли инсталатора за Windows
-   Обикновено файлът е с име подобно на `InSecurity_1.0.1_x64-setup.exe`
+   Обикновено файлът е с име подобно на `InSecurity_1.0.2_x64-setup.exe`
 4. Стартирай изтегления `.exe` файл
 5. Следвай стъпките на инсталатора
 6. След инсталацията отвори **InSecurity** от Start Menu или от desktop shortcut, ако е създаден
