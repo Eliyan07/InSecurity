@@ -361,3 +361,25 @@ export async function onFirewallRuleCreated(
 export async function openExternalUrl(url: string): Promise<void> {
   await safeInvoke('plugin:opener|open_url', { url });
 }
+
+export interface AppUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  downloadUrl: string;
+  releasePageUrl: string;
+  publishedAt: string | null;
+}
+
+export interface AppUpdateCheckResult {
+  update: AppUpdateInfo | null;
+  shouldNotify: boolean;
+  error: string | null;
+}
+
+export async function checkAppUpdate(force = false): Promise<AppUpdateCheckResult> {
+  return safeInvoke<AppUpdateCheckResult>('check_app_update', { force });
+}
+
+export async function dismissAppUpdate(version: string): Promise<void> {
+  return safeInvoke<void>('dismiss_app_update', { version });
+}

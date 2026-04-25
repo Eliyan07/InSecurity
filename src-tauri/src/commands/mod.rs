@@ -1,3 +1,4 @@
+pub mod app_updates;
 pub mod audit;
 pub mod database;
 pub mod exclusions;
@@ -13,6 +14,7 @@ pub mod scheduled_scans;
 pub mod settings;
 pub mod updates;
 
+pub use app_updates::*;
 pub use audit::*;
 pub use database::*;
 pub use exclusions::*;

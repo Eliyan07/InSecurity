@@ -8,7 +8,17 @@ import { useDashboard } from './hooks/useDashboard';
 import { Sidebar, NavItem } from './components/Sidebar/Sidebar';
 import { ErrorBoundary, withErrorBoundary } from './components/ErrorBoundary/ErrorBoundary';
 import { ConfirmDialog } from './components/shared/ConfirmDialog';
-import { safeInvoke, safeListen } from './services/api';
+import {
+  checkAppUpdate,
+  dismissAppUpdate,
+  isTauriAvailable,
+  openExternalUrl,
+  safeInvoke,
+  safeListen,
+  type AppUpdateCheckResult,
+  type AppUpdateInfo,
+} from './services/api';
+import packageJson from '../package.json';
 import './App.css';
 
 // Lazy-load page-level components - only parsed/compiled when navigated to
@@ -53,6 +63,8 @@ function App() {
 
   // Ransomware alert state
   const [ransomwareAlert, setRansomwareAlert] = useState<RansomwareAlert | null>(null);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [appUpdateChecking, setAppUpdateChecking] = useState(false);
 
   // Separate effects to avoid quarantine re-fetching when dashboard deps change
   useEffect(() => {
@@ -108,6 +120,66 @@ function App() {
     requestNotificationPermission();
     return () => { isMounted = false; };
   }, []);
+
+  const runAppUpdateCheck = useCallback(async (force = false): Promise<AppUpdateCheckResult | null> => {
+    setAppUpdateChecking(true);
+    try {
+      const result = await checkAppUpdate(force);
+      if (result.update) {
+        setAppUpdate(result.update);
+      } else if (!result.error) {
+        setAppUpdate(null);
+      }
+
+      if (!force && result.shouldNotify && result.update && isTauriAvailable()) {
+        try {
+          const { sendNotification } = await import('@tauri-apps/plugin-notification');
+          sendNotification({
+            title: t('settings.updateAvailableNotificationTitle'),
+            body: t('settings.updateAvailableNotificationBody', { version: result.update.latestVersion }),
+          });
+        } catch (err) {
+          if (import.meta.env.DEV) {
+            console.debug('Update notification skipped:', err);
+          }
+        }
+      }
+
+      return result;
+    } catch (err) {
+      if (import.meta.env.DEV) {
+        console.debug('App update check skipped:', err);
+      }
+      return null;
+    } finally {
+      setAppUpdateChecking(false);
+    }
+  }, [t]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void runAppUpdateCheck(false);
+    }, 6000);
+
+    return () => window.clearTimeout(timer);
+  }, [runAppUpdateCheck]);
+
+  const handleDismissAppUpdate = useCallback(async () => {
+    if (!appUpdate) {
+      return;
+    }
+
+    await dismissAppUpdate(appUpdate.latestVersion);
+    setAppUpdate(null);
+  }, [appUpdate]);
+
+  const handleDownloadAppUpdate = useCallback(async () => {
+    if (!appUpdate) {
+      return;
+    }
+
+    await openExternalUrl(appUpdate.downloadUrl || appUpdate.releasePageUrl);
+  }, [appUpdate]);
   
   // Listen for ransomware alerts from backend
   useEffect(() => {
@@ -378,6 +450,12 @@ function App() {
             malwarebazaarKeySet={!!settings?.malwarebazaarApiKey}
             onVirusTotalApiKeyChange={setVirusTotalApiKey}
             onMalwareBazaarApiKeyChange={setMalwareBazaarApiKey}
+            appVersion={packageJson.version}
+            appUpdate={appUpdate}
+            appUpdateChecking={appUpdateChecking}
+            onCheckAppUpdate={runAppUpdateCheck}
+            onDismissAppUpdate={handleDismissAppUpdate}
+            onDownloadAppUpdate={handleDownloadAppUpdate}
           />
         )}
         </Suspense>

@@ -5,7 +5,13 @@ import { ExclusionsManager } from '../Exclusions/ExclusionsManager';
 import { AuditLog } from './AuditLog';
 import { WhitelistManager } from './WhitelistManager';
 import { FirewallRulesPanel, ActiveConnectionsViewer } from './NetworkSecurity';
-import { safeInvoke, pickScanFolder, openExternalUrl } from '../../services/api';
+import {
+  safeInvoke,
+  pickScanFolder,
+  openExternalUrl,
+  type AppUpdateCheckResult,
+  type AppUpdateInfo,
+} from '../../services/api';
 import type { ApiKeySaveResult } from '../../hooks/useSettings';
 import './Settings.css';
 
@@ -45,6 +51,12 @@ export interface SettingsProps {
   malwarebazaarKeySet?: boolean;
   onVirusTotalApiKeyChange?: (key: string) => Promise<ApiKeySaveResult>;
   onMalwareBazaarApiKeyChange?: (key: string) => Promise<ApiKeySaveResult>;
+  appVersion?: string;
+  appUpdate?: AppUpdateInfo | null;
+  appUpdateChecking?: boolean;
+  onCheckAppUpdate?: (force?: boolean) => Promise<AppUpdateCheckResult | null>;
+  onDismissAppUpdate?: () => Promise<void>;
+  onDownloadAppUpdate?: () => Promise<void>;
 }
 
 export const Settings: React.FC<SettingsProps> = ({
@@ -74,17 +86,26 @@ export const Settings: React.FC<SettingsProps> = ({
   malwarebazaarKeySet = false,
   onVirusTotalApiKeyChange,
   onMalwareBazaarApiKeyChange,
+  appVersion,
+  appUpdate,
+  appUpdateChecking = false,
+  onCheckAppUpdate,
+  onDismissAppUpdate,
+  onDownloadAppUpdate,
 }) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>('protection');
   const [cacheClearing, setCacheClearing] = useState(false);
   const [canaryRefreshing, setCanaryRefreshing] = useState(false);
+  const [appUpdateMessage, setAppUpdateMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [appUpdateAction, setAppUpdateAction] = useState<'check' | 'download' | 'dismiss' | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [protectedFolders, setProtectedFolders] = useState<string[]>([]);
   const [newProtectedFolder, setNewProtectedFolder] = useState('');
 
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appUpdateMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showMessage = useCallback((type: 'success' | 'error', text: string) => {
     setActionMessage({ type, text });
@@ -92,10 +113,17 @@ export const Settings: React.FC<SettingsProps> = ({
     messageTimerRef.current = setTimeout(() => setActionMessage(null), 5000);
   }, []);
 
+  const showAppUpdateMessage = useCallback((type: 'success' | 'error', text: string) => {
+    setAppUpdateMessage({ type, text });
+    if (appUpdateMessageTimerRef.current) clearTimeout(appUpdateMessageTimerRef.current);
+    appUpdateMessageTimerRef.current = setTimeout(() => setAppUpdateMessage(null), 5000);
+  }, []);
+
   // Clean up message timer on unmount
   useEffect(() => {
     return () => {
       if (messageTimerRef.current) clearTimeout(messageTimerRef.current);
+      if (appUpdateMessageTimerRef.current) clearTimeout(appUpdateMessageTimerRef.current);
     };
   }, []);
 
@@ -175,6 +203,77 @@ export const Settings: React.FC<SettingsProps> = ({
       showMessage('error', err instanceof Error ? err.message : 'Failed to remove folder');
     }
   }, [fetchProtectedFolders, showMessage, t]);
+
+  const handleCheckAppUpdate = useCallback(async () => {
+    if (!onCheckAppUpdate) {
+      return;
+    }
+
+    setAppUpdateAction('check');
+    try {
+      const result = await onCheckAppUpdate(true);
+      if (!result) {
+        showAppUpdateMessage('error', t('settings.updateCheckFailed'));
+        return;
+      }
+
+      if (result.error) {
+        showAppUpdateMessage('error', result.error);
+        return;
+      }
+
+      if (!result.update) {
+        showAppUpdateMessage(
+          'success',
+          t('settings.appUpToDate', { version: appVersion ?? 'unknown' }),
+        );
+      }
+    } catch (err) {
+      showAppUpdateMessage(
+        'error',
+        err instanceof Error ? err.message : t('settings.updateCheckFailed'),
+      );
+    } finally {
+      setAppUpdateAction(null);
+    }
+  }, [appVersion, onCheckAppUpdate, showAppUpdateMessage, t]);
+
+  const handleDownloadAppUpdate = useCallback(async () => {
+    if (!onDownloadAppUpdate) {
+      return;
+    }
+
+    setAppUpdateAction('download');
+    try {
+      await onDownloadAppUpdate();
+    } catch (err) {
+      showAppUpdateMessage(
+        'error',
+        err instanceof Error ? err.message : t('settings.updateCheckFailed'),
+      );
+    } finally {
+      setAppUpdateAction(null);
+    }
+  }, [onDownloadAppUpdate, showAppUpdateMessage, t]);
+
+  const handleDismissAppUpdate = useCallback(async () => {
+    if (!onDismissAppUpdate) {
+      return;
+    }
+
+    setAppUpdateAction('dismiss');
+    try {
+      await onDismissAppUpdate();
+      showAppUpdateMessage('success', t('settings.updateDismissed'));
+    } catch (err) {
+      showAppUpdateMessage(
+        'error',
+        err instanceof Error ? err.message : t('settings.updateCheckFailed'),
+      );
+    } finally {
+      setAppUpdateAction(null);
+    }
+  }, [onDismissAppUpdate, showAppUpdateMessage, t]);
 
   return (
     <div className="settings">
@@ -278,6 +377,78 @@ export const Settings: React.FC<SettingsProps> = ({
               <option value="bg">Български</option>
             </select>
             )}
+          </div>
+
+          <div className="settings-group">
+            <h3>{t('settings.appUpdates')}</h3>
+            <p className="setting-description">{t('settings.appUpdatesHelp')}</p>
+
+            {appUpdateMessage && (
+              <div className={`action-message ${appUpdateMessage.type}`}>
+                {appUpdateMessage.text}
+              </div>
+            )}
+
+            <div className={`update-status-row ${appUpdate ? 'available' : ''}`}>
+              <div className="update-info">
+                {appUpdate ? (
+                  <>
+                    <p className="info-text">
+                      {t('settings.updateAvailable', { version: appUpdate.latestVersion })}
+                    </p>
+                    <p className="help-text">
+                      {t('settings.updateAvailableHelp', {
+                        currentVersion: appVersion ?? appUpdate.currentVersion,
+                      })}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="info-text">
+                      {t('settings.currentVersion', { version: appVersion ?? 'unknown' })}
+                    </p>
+                    <p className="help-text">
+                      {appUpdateChecking
+                        ? t('settings.checkingUpdates')
+                        : t('settings.appUpToDate', { version: appVersion ?? 'unknown' })}
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="update-actions">
+                {appUpdate && (
+                  <>
+                    <button
+                      className="btn-primary"
+                      onClick={handleDownloadAppUpdate}
+                      disabled={appUpdateAction === 'download'}
+                    >
+                      {appUpdateAction === 'download'
+                        ? t('settings.openingDownload')
+                        : t('settings.downloadInstaller')}
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      onClick={handleDismissAppUpdate}
+                      disabled={appUpdateAction === 'dismiss'}
+                    >
+                      {t('settings.hideUpdate')}
+                    </button>
+                  </>
+                )}
+
+                <button
+                  className={`btn-secondary ${appUpdateChecking || appUpdateAction === 'check' ? 'updating' : ''}`}
+                  onClick={handleCheckAppUpdate}
+                  disabled={appUpdateChecking || appUpdateAction === 'check'}
+                >
+                  {appUpdateChecking || appUpdateAction === 'check'
+                    ? t('settings.checkingNow')
+                    : t('settings.checkNow')}
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="settings-group">

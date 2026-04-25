@@ -91,6 +91,33 @@ describe('Settings', () => {
     expect(switches.length).toBeGreaterThan(0);
   });
 
+  it('renders app update section', () => {
+    render(<Settings {...defaultProps} appVersion="1.0.1" />);
+    expect(screen.getByText('App Updates')).toBeInTheDocument();
+    expect(screen.getByText('Current version: v1.0.1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Check Now' })).toBeInTheDocument();
+  });
+
+  it('shows download action when an update is available', () => {
+    render(
+      <Settings
+        {...defaultProps}
+        appVersion="1.0.1"
+        appUpdate={{
+          currentVersion: '1.0.1',
+          latestVersion: '1.0.2',
+          downloadUrl: 'https://example.com/InSecurity_1.0.2.exe',
+          releasePageUrl: 'https://github.com/example/releases/latest',
+          publishedAt: null,
+        }}
+      />
+    );
+
+    expect(screen.getByText('Installer v1.0.2 is available.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download Installer' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide This Update' })).toBeInTheDocument();
+  });
+
   it('renders with minimal required props only', () => {
     const minProps: SettingsProps = {
       autoQuarantine: false,

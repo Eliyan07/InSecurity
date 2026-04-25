@@ -193,6 +193,20 @@ describe('api module', () => {
     });
   });
 
+  describe('app update API functions', () => {
+    it('checkAppUpdate rejects without Tauri', async () => {
+      clearTauriInternals();
+      const { checkAppUpdate } = await import('../api');
+      await expect(checkAppUpdate()).rejects.toThrow('Tauri not available');
+    });
+
+    it('dismissAppUpdate rejects without Tauri', async () => {
+      clearTauriInternals();
+      const { dismissAppUpdate } = await import('../api');
+      await expect(dismissAppUpdate('1.0.2')).rejects.toThrow('Tauri not available');
+    });
+  });
+
   describe('isTauriAvailable edge cases', () => {
     it('returns false when window is undefined-like', async () => {
       clearTauriInternals();

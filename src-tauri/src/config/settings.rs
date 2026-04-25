@@ -49,6 +49,12 @@ pub struct Settings {
     /// UI language preference (e.g. "en", "bg")
     #[serde(default = "default_language")]
     pub language: String,
+    #[serde(default)]
+    pub last_app_update_check: Option<i64>,
+    #[serde(default)]
+    pub last_notified_app_update_version: Option<String>,
+    #[serde(default)]
+    pub dismissed_app_update_version: Option<String>,
     /// VirusTotal API key — only read from JSON for one-time migration to keyring; never written back
     #[serde(default, skip_serializing)]
     pub virustotal_api_key: Option<String>,
@@ -114,6 +120,9 @@ impl Default for Settings {
             auto_block_malware_network: true,
             network_monitor_interval_secs: default_network_monitor_interval(),
             language: default_language(),
+            last_app_update_check: None,
+            last_notified_app_update_version: None,
+            dismissed_app_update_version: None,
             virustotal_api_key: None,
             malwarebazaar_api_key: None,
         }
@@ -433,6 +442,9 @@ mod tests {
             auto_block_malware_network: true,
             network_monitor_interval_secs: 3,
             language: default_language(),
+            last_app_update_check: None,
+            last_notified_app_update_version: None,
+            dismissed_app_update_version: None,
             virustotal_api_key: None,
             malwarebazaar_api_key: None,
         };
@@ -496,6 +508,9 @@ mod tests {
             auto_block_malware_network: true,
             network_monitor_interval_secs: 3,
             language: default_language(),
+            last_app_update_check: None,
+            last_notified_app_update_version: None,
+            dismissed_app_update_version: None,
             virustotal_api_key: None,
             malwarebazaar_api_key: None,
         };

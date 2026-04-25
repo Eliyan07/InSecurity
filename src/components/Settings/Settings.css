@@ -98,6 +98,11 @@
   margin-bottom: 0.75rem;
 }
 
+.update-status-row.available {
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--border-color));
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+}
+
 .update-status-row .update-info {
   flex: 1;
 }
@@ -108,6 +113,14 @@
 
 .update-status-row .update-info .info-text {
   margin-bottom: 0.25rem;
+}
+
+.update-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .btn-secondary.updating {

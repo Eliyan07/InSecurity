@@ -812,6 +812,8 @@ pub fn run() {
             commands::settings::set_language,
             commands::settings::set_virustotal_api_key,
             commands::settings::set_malwarebazaar_api_key,
+            commands::app_updates::check_app_update,
+            commands::app_updates::dismiss_app_update,
             // Network security commands
             commands::network::get_active_connections,
             commands::network::get_network_events,

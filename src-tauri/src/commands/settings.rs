@@ -329,6 +329,9 @@ pub async fn update_settings(app: tauri::AppHandle, _settings: AppSettings) -> R
             auto_block_malware_network: _settings.auto_block_malware_network,
             network_monitor_interval_secs: _settings.network_monitor_interval_secs,
             language: _settings.language,
+            last_app_update_check: prev.last_app_update_check,
+            last_notified_app_update_version: prev.last_notified_app_update_version.clone(),
+            dismissed_app_update_version: prev.dismissed_app_update_version.clone(),
             virustotal_api_key: None,
             malwarebazaar_api_key: None,
         };
