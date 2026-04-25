@@ -103,6 +103,18 @@ pub struct EmulationSummary {
 pub struct DetectionPipeline;
 
 impl DetectionPipeline {
+    fn cap_suspicious_confidence(
+        verdict: &Verdict,
+        confidence: f64,
+        signature_info: &SignatureInfo,
+    ) -> f64 {
+        if *verdict == Verdict::Suspicious && signature_info.is_valid {
+            confidence.min(0.59)
+        } else {
+            confidence
+        }
+    }
+
     #[must_use]
     pub fn is_excluded(file_path: &str) -> bool {
         if let Some(db_mutex) = crate::get_database() {
@@ -848,13 +860,20 @@ impl DetectionPipeline {
                 (Verdict::Clean, 0.90)
             };
 
+            let confidence = Self::cap_suspicious_confidence(&verdict, confidence, &signature_info);
+            let threat_name = if verdict == Verdict::Suspicious {
+                Some("Suspicious.Activity".to_string())
+            } else {
+                None
+            };
+
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
                 file_hash: metadata.sha256_hash,
                 verdict,
                 confidence,
                 threat_level: "LOW".to_string(),
-                threat_name: None,
+                threat_name,
                 scan_time_ms: start.elapsed().as_millis() as u64,
                 detailed_results: DetailedResults {
                     static_analysis: Some(static_result),
@@ -962,6 +981,7 @@ impl DetectionPipeline {
         let threat_name = Self::derive_threat_name(
             &verdict,
             confidence,
+            &signature_info,
             &static_result,
             &ml_result,
             &reputation,
@@ -991,6 +1011,7 @@ impl DetectionPipeline {
     fn derive_threat_name(
         verdict: &Verdict,
         confidence: f64,
+        signature_info: &SignatureInfo,
         static_result: &static_scanner::StaticAnalysisResult,
         ml_result: &Option<ml_bridge::MLPrediction>,
         reputation: &Option<reputation::ReputationScore>,
@@ -1000,40 +1021,20 @@ impl DetectionPipeline {
             return None;
         }
 
-        // Low-confidence suspicious detections should not surface a highly specific
-        // malware family name in the main UI. Those details remain available in the
-        // expanded analysis panels (YARA, ML, reputation), but the headline should
-        // stay appropriately cautious.
-        if *verdict == Verdict::Suspicious && confidence < 0.70 {
+        let has_reputation_corroboration = reputation
+            .as_ref()
+            .is_some_and(|rep| rep.threat_count > 0 || !rep.suggested_names.is_empty());
+
+        // Suspicious detections should keep a generic headline unless they are both
+        // unsigned and corroborated by external reputation data. This prevents YARA-only
+        // family names from dominating the UI for likely false positives.
+        if *verdict == Verdict::Suspicious
+            && (confidence < 0.70 || signature_info.is_valid || !has_reputation_corroboration)
+        {
             return Some("Suspicious.Activity".to_string());
         }
 
-        // Priority 1: YARA rule matches (most specific and reliable)
-        if !static_result.yara_matches.is_empty() {
-            // Find the highest severity match
-            let best_match = static_result
-                .yara_matches
-                .iter()
-                .max_by_key(|m| match m.severity {
-                    yara_scanner::RuleSeverity::Critical => 5,
-                    yara_scanner::RuleSeverity::High => 4,
-                    yara_scanner::RuleSeverity::Medium => 3,
-                    yara_scanner::RuleSeverity::Low => 2,
-                    yara_scanner::RuleSeverity::Info => 1,
-                });
-
-            if let Some(m) = best_match {
-                // Format as "Category.RuleName" if category is available
-                let name = if !m.category.is_empty() && m.category != "unknown" {
-                    format!("{}.{}", Self::capitalize_first(&m.category), m.rule_name)
-                } else {
-                    m.rule_name.clone()
-                };
-                return Some(name);
-            }
-        }
-
-        // Priority 2: Reputation/VirusTotal suggested names
+        // Priority 1: Reputation/VirusTotal suggested names
         if let Some(rep) = reputation {
             if !rep.suggested_names.is_empty() {
                 return Some(rep.suggested_names[0].clone());
@@ -1046,6 +1047,29 @@ impl DetectionPipeline {
                     format!("{} engines", rep.threat_count)
                 };
                 return Some(format!("Detected by {}", detection_rate));
+            }
+        }
+
+        // Priority 2: YARA rule matches (most specific static signature)
+        if !static_result.yara_matches.is_empty() {
+            let best_match = static_result
+                .yara_matches
+                .iter()
+                .max_by_key(|m| match m.severity {
+                    yara_scanner::RuleSeverity::Critical => 5,
+                    yara_scanner::RuleSeverity::High => 4,
+                    yara_scanner::RuleSeverity::Medium => 3,
+                    yara_scanner::RuleSeverity::Low => 2,
+                    yara_scanner::RuleSeverity::Info => 1,
+                });
+
+            if let Some(m) = best_match {
+                let name = if !m.category.is_empty() && m.category != "unknown" {
+                    format!("{}.{}", Self::capitalize_first(&m.category), m.rule_name)
+                } else {
+                    m.rule_name.clone()
+                };
+                return Some(name);
             }
         }
 
@@ -1394,7 +1418,9 @@ impl DetectionPipeline {
             "LOW"
         };
 
-        (verdict, malware_score, threat_level.to_string())
+        let confidence = Self::cap_suspicious_confidence(&verdict, malware_score, signature_info);
+
+        (verdict, confidence, threat_level.to_string())
     }
 }
 
@@ -1867,6 +1893,7 @@ mod tests {
         let threat_name = DetectionPipeline::derive_threat_name(
             &Verdict::Suspicious,
             0.57,
+            &make_signature_info(false, false, None),
             &static_result,
             &None,
             &None,
@@ -1894,12 +1921,86 @@ mod tests {
         let threat_name = DetectionPipeline::derive_threat_name(
             &Verdict::Malware,
             0.95,
+            &make_signature_info(false, false, None),
             &static_result,
             &None,
             &None,
         );
 
         assert_eq!(threat_name, Some("Rat.RAT_CobaltStrike_Beacon".to_string()));
+    }
+
+    #[test]
+    fn test_high_confidence_signed_suspicious_stays_generic() {
+        let static_result = static_scanner::StaticAnalysisResult {
+            yara_matches: vec![YaraMatch {
+                rule_name: "RAT_CobaltStrike_Beacon".to_string(),
+                severity: RuleSeverity::Critical,
+                description: "Cobalt Strike Beacon".to_string(),
+                category: "rat".to_string(),
+                offset: Some(0),
+            }],
+            entropy_score: 7.8,
+            is_whitelisted: false,
+            is_blacklisted: false,
+            suspicious_characteristics: vec![],
+        };
+
+        let threat_name = DetectionPipeline::derive_threat_name(
+            &Verdict::Suspicious,
+            0.82,
+            &make_signature_info(true, false, Some("Ferox Games B.V.")),
+            &static_result,
+            &None,
+            &None,
+        );
+
+        assert_eq!(threat_name, Some("Suspicious.Activity".to_string()));
+    }
+
+    #[test]
+    fn test_unsigned_suspicious_with_reputation_can_keep_specific_name() {
+        let static_result = static_scanner::StaticAnalysisResult {
+            yara_matches: vec![YaraMatch {
+                rule_name: "RAT_CobaltStrike_Beacon".to_string(),
+                severity: RuleSeverity::Critical,
+                description: "Cobalt Strike Beacon".to_string(),
+                category: "rat".to_string(),
+                offset: Some(0),
+            }],
+            entropy_score: 7.8,
+            is_whitelisted: false,
+            is_blacklisted: false,
+            suspicious_characteristics: vec![],
+        };
+        let reputation = Some(reputation::ReputationScore {
+            overall_score: 0.75,
+            threat_count: 6,
+            last_analysis_date: 0,
+            sources: vec!["VirusTotal".to_string()],
+            detections: vec![],
+            suggested_names: vec!["CobaltStrike.Beacon".to_string()],
+        });
+
+        let threat_name = DetectionPipeline::derive_threat_name(
+            &Verdict::Suspicious,
+            0.74,
+            &make_signature_info(false, false, None),
+            &static_result,
+            &None,
+            &reputation,
+        );
+
+        assert_eq!(threat_name, Some("CobaltStrike.Beacon".to_string()));
+    }
+
+    #[test]
+    fn test_signed_suspicious_confidence_is_capped() {
+        let signature = make_signature_info(true, false, Some("Ferox Games B.V."));
+        let capped =
+            DetectionPipeline::cap_suspicious_confidence(&Verdict::Suspicious, 0.88, &signature);
+
+        assert!((capped - 0.59).abs() < f64::EPSILON);
     }
 
     #[test]

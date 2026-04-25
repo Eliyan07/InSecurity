@@ -166,6 +166,14 @@
   white-space: nowrap;
 }
 
+.result-folder-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .result-threat {
   font-size: 0.8rem;
   color: var(--text-muted);

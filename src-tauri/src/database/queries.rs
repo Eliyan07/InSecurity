@@ -58,7 +58,7 @@ impl DatabaseQueries {
         };
 
         conn.execute(
-            "INSERT OR REPLACE INTO verdicts
+            "INSERT INTO verdicts
             (file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, file_id, source)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
@@ -80,7 +80,9 @@ impl DatabaseQueries {
     pub fn get_verdict_by_hash(conn: &Connection, hash: &str) -> Result<Option<Verdict>> {
         let mut stmt = conn.prepare(
             "SELECT id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, source
-             FROM verdicts WHERE file_hash = ?1"
+             FROM verdicts WHERE file_hash = ?1
+             ORDER BY scanned_at DESC, id DESC
+             LIMIT 1"
         )?;
 
         let verdict = stmt
@@ -105,15 +107,17 @@ impl DatabaseQueries {
 
     pub fn get_recent_verdicts(conn: &Connection, limit: u32) -> Result<Vec<Verdict>> {
         let mut stmt = conn.prepare(
-            "SELECT v.id, v.file_hash, v.file_path, v.verdict, v.confidence, v.threat_level, v.threat_name, v.scan_time_ms, v.scanned_at, v.source
+            r#"SELECT v.id, v.file_hash, v.file_path, v.verdict, v.confidence, v.threat_level, v.threat_name, v.scan_time_ms, v.scanned_at, v.source
              FROM verdicts v
-             INNER JOIN (
-                 SELECT file_path, MAX(scanned_at) as max_scanned_at
-                 FROM verdicts
-                 GROUP BY file_path
-             ) latest ON v.file_path = latest.file_path AND v.scanned_at = latest.max_scanned_at
+             WHERE v.id = (
+                 SELECT v2.id
+                 FROM verdicts v2
+                 WHERE LOWER(REPLACE(v2.file_path, '/', '\')) = LOWER(REPLACE(v.file_path, '/', '\'))
+                 ORDER BY v2.scanned_at DESC, v2.id DESC
+                 LIMIT 1
+             )
              ORDER BY v.scanned_at DESC
-             LIMIT ?1"
+             LIMIT ?1"#
         )?;
 
         let verdicts = stmt

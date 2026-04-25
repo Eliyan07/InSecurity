@@ -3,51 +3,62 @@ use crate::database::DatabaseQueries;
 /// Database commands exposed to frontend
 use serde::{Deserialize, Serialize};
 
+fn normalize_path_identity(path: &str) -> String {
+    path.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerdictRecord {
+    pub id: i64,
     pub file_hash: String,
     pub file_path: String,
     pub verdict: String,
     pub confidence: f64,
     pub threat_level: String,
+    pub threat_name: Option<String>,
     pub scanned_at: i64,
 }
 
 fn query_active_threats(conn: &rusqlite::Connection) -> Result<Vec<VerdictRecord>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT v.file_hash, v.file_path,
+            r#"SELECT v.id, v.file_hash, v.file_path,
                 CASE WHEN LOWER(v.verdict) = 'pup' THEN 'Suspicious' ELSE v.verdict END as verdict,
-                v.confidence, v.threat_level, v.scanned_at
+                v.confidence, v.threat_level, v.threat_name, v.scanned_at
          FROM verdicts v
-         WHERE v.rowid = (
-             SELECT v2.rowid
+         WHERE v.id = (
+             SELECT v2.id
              FROM verdicts v2
-             WHERE COALESCE(NULLIF(v2.file_hash, ''), v2.file_path) =
-                   COALESCE(NULLIF(v.file_hash, ''), v.file_path)
-             ORDER BY v2.scanned_at DESC, v2.rowid DESC
+             WHERE LOWER(REPLACE(v2.file_path, '/', '\')) =
+                   LOWER(REPLACE(v.file_path, '/', '\'))
+             ORDER BY v2.scanned_at DESC, v2.id DESC
              LIMIT 1
          )
          AND LOWER(v.verdict) IN ('malware', 'suspicious', 'pup')
          AND NOT EXISTS (
              SELECT 1 FROM quarantine q
-             WHERE q.file_hash = v.file_hash
+             WHERE LOWER(REPLACE(q.original_path, '/', '\')) =
+                   LOWER(REPLACE(v.file_path, '/', '\'))
              AND q.permanently_deleted = 0
              AND q.restored_at IS NULL
          )
-         ORDER BY v.scanned_at DESC",
+         ORDER BY v.scanned_at DESC, v.id DESC"#,
         )
         .map_err(|e| format!("Query error: {}", e))?;
 
     let records = stmt
         .query_map([], |row| {
             Ok(VerdictRecord {
-                file_hash: row.get(0)?,
-                file_path: row.get(1)?,
-                verdict: row.get(2)?,
-                confidence: row.get(3)?,
-                threat_level: row.get(4)?,
-                scanned_at: row.get(5)?,
+                id: row.get(0)?,
+                file_hash: row.get(1)?,
+                file_path: row.get(2)?,
+                verdict: row.get(3)?,
+                confidence: row.get(4)?,
+                threat_level: row.get(5)?,
+                threat_name: row.get(6)?,
+                scanned_at: row.get(7)?,
             })
         })
         .map_err(|e| format!("Query map error: {}", e))?;
@@ -67,11 +78,13 @@ pub async fn get_verdicts(_limit: u32) -> Result<Vec<VerdictRecord>, String> {
                 let records = rows
                     .into_iter()
                     .map(|r| VerdictRecord {
+                        id: r.id,
                         file_hash: r.file_hash,
                         file_path: r.file_path,
                         verdict: r.verdict,
                         confidence: r.confidence,
                         threat_level: r.threat_level,
+                        threat_name: r.threat_name,
                         scanned_at: r.scanned_at,
                     })
                     .collect();
@@ -98,11 +111,13 @@ pub async fn search_hash(_hash: String) -> Result<Option<VerdictRecord>, String>
     crate::with_db_async(
         move |conn| match DatabaseQueries::get_verdict_by_hash(conn, &_hash) {
             Ok(Some(v)) => Ok(Some(VerdictRecord {
+                id: v.id,
                 file_hash: v.file_hash,
                 file_path: v.file_path,
                 verdict: v.verdict,
                 confidence: v.confidence,
                 threat_level: v.threat_level,
+                threat_name: v.threat_name,
                 scanned_at: v.scanned_at,
             })),
             Ok(None) => Ok(None),
@@ -230,7 +245,7 @@ pub async fn get_dashboard_stats() -> Result<DashboardStats, String> {
                 // a complete picture of system security state.
                 let total_scans: u32 = conn
                     .query_row(
-                        "SELECT COUNT(DISTINCT COALESCE(NULLIF(file_hash, ''), file_path)) FROM verdicts",
+                        "SELECT COUNT(DISTINCT LOWER(REPLACE(file_path, '/', '\\'))) FROM verdicts",
                         [],
                         |r| r.get(0),
                     )
@@ -243,12 +258,12 @@ pub async fn get_dashboard_stats() -> Result<DashboardStats, String> {
                         "SELECT COUNT(*) FROM (
                             SELECT 1
                             FROM verdicts v
-                            WHERE v.rowid = (
-                                SELECT v2.rowid
+                            WHERE v.id = (
+                                SELECT v2.id
                                 FROM verdicts v2
-                                WHERE COALESCE(NULLIF(v2.file_hash, ''), v2.file_path) =
-                                      COALESCE(NULLIF(v.file_hash, ''), v.file_path)
-                                ORDER BY v2.scanned_at DESC, v2.rowid DESC
+                                WHERE LOWER(REPLACE(v2.file_path, '/', '\\')) =
+                                      LOWER(REPLACE(v.file_path, '/', '\\'))
+                                ORDER BY v2.scanned_at DESC, v2.id DESC
                                 LIMIT 1
                             )
                             AND LOWER(v.verdict) = 'malware'
@@ -263,12 +278,12 @@ pub async fn get_dashboard_stats() -> Result<DashboardStats, String> {
                         "SELECT COUNT(*) FROM (
                             SELECT 1
                             FROM verdicts v
-                            WHERE v.rowid = (
-                                SELECT v2.rowid
+                            WHERE v.id = (
+                                SELECT v2.id
                                 FROM verdicts v2
-                                WHERE COALESCE(NULLIF(v2.file_hash, ''), v2.file_path) =
-                                      COALESCE(NULLIF(v.file_hash, ''), v.file_path)
-                                ORDER BY v2.scanned_at DESC, v2.rowid DESC
+                                WHERE LOWER(REPLACE(v2.file_path, '/', '\\')) =
+                                      LOWER(REPLACE(v.file_path, '/', '\\'))
+                                ORDER BY v2.scanned_at DESC, v2.id DESC
                                 LIMIT 1
                             )
                             AND LOWER(v.verdict) IN ('suspicious', 'pup')
@@ -363,34 +378,80 @@ pub struct ExternalReportInfo {
     pub detection_count: Option<u32>,
 }
 
-/// Get comprehensive threat information for a file hash
+/// Get comprehensive threat information for a threat row id (with legacy fallbacks)
 /// This combines data from verdicts, threat_intel, and external_reports tables
 #[tauri::command]
-pub async fn get_full_threat_info(file_hash: String) -> Result<FullThreatInfo, String> {
-    let hash = file_hash.trim().to_lowercase();
+pub async fn get_full_threat_info(threat_id: String) -> Result<FullThreatInfo, String> {
+    let identity = threat_id.trim().to_string();
 
-    if hash.is_empty() {
-        return Err("File hash cannot be empty".to_string());
+    if identity.is_empty() {
+        return Err("Threat id cannot be empty".to_string());
     }
 
     crate::with_db_async(move |conn| {
-                let verdict_info = conn.query_row(
-                    "SELECT file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at
-                     FROM verdicts WHERE file_hash = ?1 ORDER BY scanned_at DESC LIMIT 1",
-                    [&hash],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, f64>(3)?,
-                            row.get::<_, String>(4)?,
-                            row.get::<_, Option<String>>(5)?,
-                            row.get::<_, i64>(6)?,
-                            row.get::<_, i64>(7)?,
-                        ))
-                    }
-                ).map_err(|_| "No verdict found for this hash".to_string())?;
+                let verdict_info = if let Ok(id) = identity.parse::<i64>() {
+                    conn.query_row(
+                        "SELECT file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at
+                         FROM verdicts WHERE id = ?1",
+                        [id],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(5)?,
+                                row.get::<_, i64>(6)?,
+                                row.get::<_, i64>(7)?,
+                            ))
+                        },
+                    )
+                } else if identity.contains('\\') || identity.contains('/') || identity.contains(':') {
+                    let normalized_path = normalize_path_identity(&identity);
+                    conn.query_row(
+                        "SELECT file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at
+                         FROM verdicts
+                         WHERE LOWER(REPLACE(file_path, '/', '\\')) = ?1
+                         ORDER BY scanned_at DESC, id DESC
+                         LIMIT 1",
+                        [&normalized_path],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(5)?,
+                                row.get::<_, i64>(6)?,
+                                row.get::<_, i64>(7)?,
+                            ))
+                        },
+                    )
+                } else {
+                    let hash = identity.to_lowercase();
+                    conn.query_row(
+                        "SELECT file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at
+                         FROM verdicts WHERE file_hash = ?1 ORDER BY scanned_at DESC, id DESC LIMIT 1",
+                        [&hash],
+                        |row| {
+                            Ok((
+                                row.get::<_, String>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, String>(2)?,
+                                row.get::<_, f64>(3)?,
+                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(5)?,
+                                row.get::<_, i64>(6)?,
+                                row.get::<_, i64>(7)?,
+                            ))
+                        },
+                    )
+                }
+                .map_err(|_| "No verdict found for this threat".to_string())?;
+
+                let hash = verdict_info.0.to_lowercase();
 
                 // Get threat intel info
                 let intel_info: Option<(String, Option<String>, String, String, i64, i64)> = conn.query_row(
@@ -497,11 +558,13 @@ mod tests {
     #[test]
     fn test_verdict_record_serialize_roundtrip() {
         let vr = VerdictRecord {
+            id: 42,
             file_hash: "abc123".to_string(),
             file_path: "C:\\test\\file.exe".to_string(),
             verdict: "Malware".to_string(),
             confidence: 0.97,
             threat_level: "HIGH".to_string(),
+            threat_name: Some("Trojan.Generic".to_string()),
             scanned_at: 1700000000,
         };
         let json = serde_json::to_string(&vr).unwrap();
@@ -515,11 +578,13 @@ mod tests {
     #[test]
     fn test_verdict_record_clone() {
         let vr = VerdictRecord {
+            id: 1,
             file_hash: "hash".to_string(),
             file_path: "/path".to_string(),
             verdict: "Clean".to_string(),
             confidence: 0.5,
             threat_level: "LOW".to_string(),
+            threat_name: None,
             scanned_at: 0,
         };
         let cloned = vr.clone();
@@ -579,15 +644,17 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE verdicts (
+                id INTEGER PRIMARY KEY,
                 file_hash TEXT NOT NULL,
                 file_path TEXT NOT NULL,
                 verdict TEXT NOT NULL,
                 confidence REAL NOT NULL,
                 threat_level TEXT NOT NULL,
+                threat_name TEXT,
                 scanned_at INTEGER NOT NULL
             );
             CREATE TABLE quarantine (
-                file_hash TEXT NOT NULL,
+                original_path TEXT NOT NULL,
                 permanently_deleted INTEGER NOT NULL DEFAULT 0,
                 restored_at INTEGER
             );",
@@ -595,27 +662,31 @@ mod tests {
         .unwrap();
 
         conn.execute(
-            "INSERT INTO verdicts (file_hash, file_path, verdict, confidence, threat_level, scanned_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
+                1_i64,
                 "hash-dev",
                 r"C:\Users\123\Desktop\rust_projects\antivirus_app\insecurity\src-tauri\target\release\app.exe",
                 "Malware",
                 0.98_f64,
                 "HIGH",
+                Option::<String>::None,
                 100_i64,
             ],
         ).unwrap();
 
         conn.execute(
-            "INSERT INTO verdicts (file_hash, file_path, verdict, confidence, threat_level, scanned_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
+                2_i64,
                 "hash-real",
                 r"C:\Users\123\Desktop\Downloads\suspicious.exe",
                 "Suspicious",
                 0.76_f64,
                 "MEDIUM",
+                Some("Suspicious.Activity".to_string()),
                 101_i64,
             ],
         ).unwrap();
@@ -625,6 +696,46 @@ mod tests {
         assert_eq!(threats.len(), 1);
         assert_eq!(threats[0].file_hash, "hash-real");
         assert_eq!(threats[0].verdict, "Suspicious");
+    }
+
+    #[test]
+    fn test_query_active_threats_keeps_same_hash_in_different_paths() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE verdicts (
+                id INTEGER PRIMARY KEY,
+                file_hash TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                threat_level TEXT NOT NULL,
+                threat_name TEXT,
+                scanned_at INTEGER NOT NULL
+            );
+            CREATE TABLE quarantine (
+                original_path TEXT NOT NULL,
+                permanently_deleted INTEGER NOT NULL DEFAULT 0,
+                restored_at INTEGER
+            );",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![1_i64, "samehash", r"C:\one\tool.exe", "Suspicious", 0.6_f64, "MEDIUM", Some("Suspicious.Activity".to_string()), 100_i64],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![2_i64, "samehash", r"C:\two\tool.exe", "Suspicious", 0.7_f64, "MEDIUM", Some("Suspicious.Activity".to_string()), 101_i64],
+        )
+        .unwrap();
+
+        let threats = query_active_threats(&conn).unwrap();
+
+        assert_eq!(threats.len(), 2);
     }
 
     // =========================================================================

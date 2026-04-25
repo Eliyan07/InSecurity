@@ -20,6 +20,7 @@ vi.mock('../ThreatIntel/ThreatIntelligencePanel', () => ({
 }));
 
 const malwareResult: ScanResult = {
+  threatId: 'threat-1',
   fileHash: 'abc123',
   verdict: Verdict.MALWARE,
   confidence: 0.95,
@@ -30,6 +31,7 @@ const malwareResult: ScanResult = {
 };
 
 const cleanResult: ScanResult = {
+  threatId: 'threat-2',
   fileHash: 'def456',
   verdict: Verdict.CLEAN,
   confidence: 0.05,
@@ -39,6 +41,7 @@ const cleanResult: ScanResult = {
 };
 
 const suspiciousResult: ScanResult = {
+  threatId: 'threat-3',
   fileHash: 'ghi789',
   verdict: Verdict.SUSPICIOUS,
   confidence: 0.65,
@@ -91,5 +94,23 @@ describe('RealtimeResults', () => {
     expect(screen.getByText(/sus\.exe/)).toBeInTheDocument();
     // clean.exe is not shown because it's not a threat
     expect(screen.queryByText(/clean\.exe/)).not.toBeInTheDocument();
+  });
+
+  it('shows a folder hint when duplicate basenames are visible', () => {
+    render(
+      <RealtimeResults
+        results={[
+          malwareResult,
+          {
+            ...suspiciousResult,
+            threatId: 'threat-4',
+            filePath: 'C:\\other\\malware.exe',
+            threatName: 'Suspicious.Activity',
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText(/other/i)).toBeInTheDocument();
   });
 });

@@ -8,8 +8,8 @@ impl DatabaseSchema {
         // Verdicts table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS verdicts (
-                id INTEGER PRIMARY KEY,
-                file_hash TEXT NOT NULL UNIQUE,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
                 file_path TEXT NOT NULL,
                 verdict TEXT NOT NULL,
                 confidence REAL NOT NULL,
@@ -231,10 +231,18 @@ impl DatabaseSchema {
         // performs a full table scan for every row.
         conn.execute("CREATE INDEX IF NOT EXISTS idx_verdicts_path_scanned ON verdicts(file_path, scanned_at DESC)", [])?;
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_verdicts_path_norm_scanned ON verdicts(LOWER(REPLACE(file_path, '/', '\\')), scanned_at DESC)",
+            [],
+        )?;
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_verdicts_verdict ON verdicts(verdict)",
             [],
         )?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_quarantine_active ON quarantine(permanently_deleted, restored_at)", [])?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quarantine_original_path_norm ON quarantine(LOWER(REPLACE(original_path, '/', '\\')), permanently_deleted, restored_at)",
+            [],
+        )?;
 
         Ok(())
     }
@@ -351,8 +359,10 @@ mod tests {
             "idx_external_reports_provider_id",
             "idx_scan_history_started_at",
             "idx_verdicts_path_scanned",
+            "idx_verdicts_path_norm_scanned",
             "idx_verdicts_verdict",
             "idx_quarantine_active",
+            "idx_quarantine_original_path_norm",
         ];
 
         for idx in &expected_indexes {
@@ -415,6 +425,35 @@ mod tests {
             )
             .unwrap();
         assert_eq!(source, "realtime");
+    }
+
+    #[test]
+    fn test_verdicts_allow_same_hash_in_multiple_paths() {
+        let conn = in_memory_db();
+        DatabaseSchema::init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO verdicts (file_hash, file_path, verdict, confidence, threat_level, scan_time_ms, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params!["samehash", "C:\\one\\sample.exe", "Suspicious", 0.6, "MEDIUM", 10, 100i64],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO verdicts (file_hash, file_path, verdict, confidence, threat_level, scan_time_ms, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params!["samehash", "C:\\two\\sample.exe", "Suspicious", 0.7, "MEDIUM", 10, 101i64],
+        )
+        .unwrap();
+
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verdicts WHERE file_hash = 'samehash'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count, 2);
     }
 
     #[test]

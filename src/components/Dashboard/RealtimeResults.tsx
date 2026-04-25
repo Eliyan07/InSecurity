@@ -15,19 +15,29 @@ import { ConfirmDialog } from '../shared/ConfirmDialog';
 
 export interface RealtimeResultsProps {
   results: ScanResult[];
-  onThreatResolved?: (fileHash: string) => void;
+  onThreatResolved?: (threatId: string) => void;
 }
 
 type ActionType = 'quarantine' | 'delete' | 'ignore';
 
 interface ActionState {
-  fileHash: string;
+  threatId: string;
   action: ActionType;
   loading: boolean;
 }
 
 const getErrorMessage = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
+
+const normalizePathKey = (filePath: string) =>
+  filePath.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+
+const getFolderHint = (filePath: string) => {
+  const parts = filePath.replace(/\//g, '\\').split('\\').filter(Boolean);
+  const directories = parts.slice(0, -1);
+  if (directories.length === 0) return filePath;
+  return directories.slice(-2).join('\\');
+};
 
 // Convert scan.DetailedResults to threatIntel.DetailedResults format
 const convertDetailedResults = (details?: DetailedResults): ThreatIntelDetailedResults => {
@@ -127,11 +137,17 @@ const toDetailedResult = (result: ScanResult, fetchedData?: any): DetailedScanRe
     }
   }
 
-  const threatName = result.threatName
-    || fetchedData?.intel_threat_name
-    || fetchedData?.threat_name
-    || mergedDetails.reputation_score?.suggested_names?.[0]
-    || mergedDetails.ml_prediction?.malware_family;
+  const pinnedGenericSuspiciousHeadline =
+    result.verdict === Verdict.SUSPICIOUS
+    && (result.threatName === 'Suspicious.Activity' || fetchedData?.threat_name === 'Suspicious.Activity');
+
+  const threatName = pinnedGenericSuspiciousHeadline
+    ? 'Suspicious.Activity'
+    : result.threatName
+      || fetchedData?.threat_name
+      || fetchedData?.intel_threat_name
+      || mergedDetails.reputation_score?.suggested_names?.[0]
+      || mergedDetails.ml_prediction?.malware_family;
 
   return {
     file_hash: result.fileHash,
@@ -155,7 +171,7 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [actionState, setActionState] = useState<ActionState | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [resolvedHashes, setResolvedHashes] = useState<Set<string>>(new Set());
+  const [resolvedThreatIds, setResolvedThreatIds] = useState<Set<string>>(new Set());
   const { confirm: confirmDialog, dialogProps } = useConfirmDialog();
 
   const fetchDetailedInfo = async (result: ScanResult) => {
@@ -163,7 +179,7 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
       setLoadingDetails(true);
     }
     try {
-      const data = await safeInvoke<any>('get_full_threat_info', { fileHash: result.fileHash });
+      const data = await safeInvoke<any>('get_full_threat_info', { threatId: result.threatId });
       setDetailedData(data);
     } catch {
       setDetailedData(null);
@@ -194,15 +210,15 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
       confirmLabel: t('realtime.quarantine'),
       variant: 'warning',
     })) return;
-    setActionState({ fileHash: result.fileHash, action: 'quarantine', loading: true });
+    setActionState({ threatId: result.threatId, action: 'quarantine', loading: true });
     setError(null);
     try {
       await safeInvoke('quarantine_file_by_path', {
         filePath: result.filePath, fileHash: result.fileHash,
         verdict: result.verdict, threatLevel: result.threatLevel,
       });
-      setResolvedHashes(prev => new Set(prev).add(result.fileHash));
-      onThreatResolved?.(result.fileHash);
+      setResolvedThreatIds(prev => new Set(prev).add(result.threatId));
+      onThreatResolved?.(result.threatId);
       setExpandedItem(null);
       closeDetailPanel();
     } catch (err) {
@@ -219,12 +235,12 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
       confirmLabel: t('realtime.delete'),
       variant: 'danger',
     })) return;
-    setActionState({ fileHash: result.fileHash, action: 'delete', loading: true });
+    setActionState({ threatId: result.threatId, action: 'delete', loading: true });
     setError(null);
     try {
       await safeInvoke('delete_threat_file', { filePath: result.filePath, fileHash: result.fileHash });
-      setResolvedHashes(prev => new Set(prev).add(result.fileHash));
-      onThreatResolved?.(result.fileHash);
+      setResolvedThreatIds(prev => new Set(prev).add(result.threatId));
+      onThreatResolved?.(result.threatId);
       setExpandedItem(null);
       closeDetailPanel();
     } catch (err) {
@@ -235,12 +251,12 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
   };
 
   const handleIgnore = async (result: ScanResult) => {
-    setActionState({ fileHash: result.fileHash, action: 'ignore', loading: true });
+    setActionState({ threatId: result.threatId, action: 'ignore', loading: true });
     setError(null);
     try {
-      await ignoreThreat(result.fileHash);
-      setResolvedHashes(prev => new Set(prev).add(result.fileHash));
-      onThreatResolved?.(result.fileHash);
+      await ignoreThreat(result.fileHash, result.filePath);
+      setResolvedThreatIds(prev => new Set(prev).add(result.threatId));
+      onThreatResolved?.(result.threatId);
       setExpandedItem(null);
       closeDetailPanel();
     } catch (err) {
@@ -250,22 +266,30 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
     }
   };
 
-  const isLoading = (fileHash: string, action: ActionType) =>
-    actionState?.fileHash === fileHash && actionState?.action === action && actionState?.loading;
+  const isLoading = (threatId: string, action: ActionType) =>
+    actionState?.threatId === threatId && actionState?.action === action && actionState?.loading;
 
   const displayResults = useMemo(() => {
     const filtered = results.filter(
-      r => isThreat(r.verdict) && !resolvedHashes.has(r.fileHash) && r.fileHash && r.filePath
+      r => isThreat(r.verdict) && !resolvedThreatIds.has(r.threatId) && r.threatId && r.fileHash && r.filePath
     );
     const seenPaths = new Set<string>();
-    const seenHashes = new Set<string>();
     return filtered.filter(r => {
-      if (seenPaths.has(r.filePath) || seenHashes.has(r.fileHash)) return false;
-      seenPaths.add(r.filePath);
-      seenHashes.add(r.fileHash);
+      const pathKey = normalizePathKey(r.filePath);
+      if (seenPaths.has(pathKey)) return false;
+      seenPaths.add(pathKey);
       return true;
     });
-  }, [results, resolvedHashes]);
+  }, [results, resolvedThreatIds]);
+
+  const basenameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const result of displayResults) {
+      const basename = getFileName(result.filePath);
+      counts.set(basename, (counts.get(basename) ?? 0) + 1);
+    }
+    return counts;
+  }, [displayResults]);
 
   const itemRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
 
@@ -337,28 +361,30 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
 
         <div className={`results-list ${expandedItem ? 'has-expanded' : ''}`}>
           {displayResults.map((result) => {
-            const isExpanded = expandedItem === result.fileHash;
-            const isCurrentLoading = actionState?.fileHash === result.fileHash;
+            const isExpanded = expandedItem === result.threatId;
+            const isCurrentLoading = actionState?.threatId === result.threatId;
+            const basename = getFileName(result.filePath);
+            const showFolderHint = (basenameCounts.get(basename) ?? 0) > 1;
 
             return (
               <div
-                key={result.fileHash}
+                key={result.threatId}
                 className={`result-item ${getVerdictClass(result.verdict)} ${isExpanded ? 'expanded' : ''}`}
                 ref={(el) => {
-                  if (el) itemRefs.current.set(result.fileHash, el);
-                  else itemRefs.current.delete(result.fileHash);
+                  if (el) itemRefs.current.set(result.threatId, el);
+                  else itemRefs.current.delete(result.threatId);
                 }}
                 tabIndex={isExpanded ? -1 : undefined}
               >
                 <div
                   className="result-main"
-                  onClick={() => setExpandedItem(isExpanded ? null : result.fileHash)}
+                  onClick={() => setExpandedItem(isExpanded ? null : result.threatId)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      setExpandedItem(isExpanded ? null : result.fileHash);
+                      setExpandedItem(isExpanded ? null : result.threatId);
                     }
                   }}
                 >
@@ -368,7 +394,12 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
                     </span>
                   </div>
                   <div className="result-details">
-                    <span className="result-filename" title={result.filePath}>{getFileName(result.filePath)}</span>
+                    <span className="result-filename" title={result.filePath}>{basename}</span>
+                    {showFolderHint && (
+                      <span className="result-folder-hint" title={result.filePath}>
+                        {getFolderHint(result.filePath)}
+                      </span>
+                    )}
                     {result.threatName && <span className="result-threat">{result.threatName}</span>}
                   </div>
                   <div className="result-confidence">{Math.round(result.confidence * 100)}%</div>
@@ -388,7 +419,7 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
 
                     <div className="result-actions">
                       <button className="action-btn quarantine" onClick={() => handleQuarantine(result)} disabled={isCurrentLoading}>
-                        {isLoading(result.fileHash, 'quarantine') ? <span className="spinner" /> : (
+                        {isLoading(result.threatId, 'quarantine') ? <span className="spinner" /> : (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0110 0v4" />
                           </svg>
@@ -397,7 +428,7 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
                       </button>
 
                       <button className="action-btn delete" onClick={() => handleDelete(result)} disabled={isCurrentLoading}>
-                        {isLoading(result.fileHash, 'delete') ? <span className="spinner" /> : (
+                        {isLoading(result.threatId, 'delete') ? <span className="spinner" /> : (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="3 6 5 6 21 6" />
                             <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -407,7 +438,7 @@ export const RealtimeResults: React.FC<RealtimeResultsProps> = React.memo(({ res
                       </button>
 
                       <button className="action-btn ignore" onClick={() => handleIgnore(result)} disabled={isCurrentLoading}>
-                        {isLoading(result.fileHash, 'ignore') ? <span className="spinner" /> : (
+                        {isLoading(result.threatId, 'ignore') ? <span className="spinner" /> : (
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 12l2 2 4-4" />
                           </svg>

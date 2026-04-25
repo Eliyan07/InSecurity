@@ -9,7 +9,7 @@ export interface DashboardProps {
   stats: DashboardStats | null;
   loading: boolean;
   realtimeResults: ScanResult[];
-  onThreatResolved?: (fileHash: string) => void;
+  onThreatResolved?: (threatId: string) => void;
   hasReputationKeys?: boolean;
 }
 

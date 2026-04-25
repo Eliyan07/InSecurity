@@ -80,11 +80,13 @@ describe('useRealtimeScan', () => {
   it('loads active threats on mount', async () => {
     const mockThreats = [
       {
+        id: 1,
         file_hash: 'abc123',
         file_path: 'C:\\test\\malware.exe',
         verdict: 'Malware',
         confidence: 0.95,
         threat_level: 'HIGH',
+        threat_name: 'Trojan.Test',
         scanned_at: 1700000000,
       },
     ];
@@ -102,6 +104,7 @@ describe('useRealtimeScan', () => {
     });
 
     expect(result.current.realtimeResults).toHaveLength(1);
+    expect(result.current.realtimeResults[0].threatId).toBe('1');
     expect(result.current.realtimeResults[0].fileHash).toBe('abc123');
     expect(result.current.realtimeResults[0].verdict).toBe('Malware');
   });
@@ -131,11 +134,13 @@ describe('useRealtimeScan', () => {
   it('clearResults empties the results array', async () => {
     const mockThreats = [
       {
+        id: 1,
         file_hash: 'abc123',
         file_path: 'C:\\test\\malware.exe',
         verdict: 'Malware',
         confidence: 0.95,
         threat_level: 'HIGH',
+        threat_name: 'Trojan.Test',
         scanned_at: 1700000000,
       },
     ];
@@ -161,22 +166,26 @@ describe('useRealtimeScan', () => {
     expect(result.current.realtimeResults).toEqual([]);
   });
 
-  it('removeResult removes a specific result by hash', async () => {
+  it('removeResult removes a specific result by threat id', async () => {
     const mockThreats = [
       {
+        id: 1,
         file_hash: 'abc123',
         file_path: 'C:\\test\\a.exe',
         verdict: 'Malware',
         confidence: 0.9,
         threat_level: 'HIGH',
+        threat_name: 'Trojan.Test',
         scanned_at: 1700000000,
       },
       {
+        id: 2,
         file_hash: 'def456',
         file_path: 'C:\\test\\b.exe',
         verdict: 'Suspicious',
         confidence: 0.7,
         threat_level: 'MEDIUM',
+        threat_name: 'Suspicious.Activity',
         scanned_at: 1700000001,
       },
     ];
@@ -196,7 +205,7 @@ describe('useRealtimeScan', () => {
     expect(result.current.realtimeResults).toHaveLength(2);
 
     act(() => {
-      result.current.removeResult('abc123');
+      result.current.removeResult('1');
     });
 
     expect(result.current.realtimeResults).toHaveLength(1);
@@ -235,11 +244,13 @@ describe('useRealtimeScan', () => {
   it('deduplicates results by file path (replaces existing)', async () => {
     // Start with a loaded threat
     const initialThreat = {
+      id: 1,
       file_hash: 'hash1',
       file_path: 'C:\\test\\malware.exe',
       verdict: 'Suspicious',
       confidence: 0.6,
       threat_level: 'MEDIUM',
+      threat_name: 'Suspicious.Activity',
       scanned_at: 1700000000,
     };
     mockSafeInvoke.mockImplementation((cmd: string) => {
@@ -281,7 +292,7 @@ describe('useRealtimeScan', () => {
     expect(result.current.realtimeResults[0].confidence).toBe(0.95);
   });
 
-  it('skips results with duplicate hash but different path', async () => {
+  it('keeps results with duplicate hash but different path', async () => {
     mockSafeInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'get_scan_status') return Promise.resolve(mockScanStatus);
       if (cmd === 'get_active_threats') return Promise.resolve([]);
@@ -314,7 +325,7 @@ describe('useRealtimeScan', () => {
     });
     expect(result.current.realtimeResults).toHaveLength(1);
 
-    // Second result with same hash but different path - should be skipped
+    // Second result with same hash but different path should remain visible
     await act(async () => {
       listenerCallback!({
         payload: {
@@ -327,7 +338,7 @@ describe('useRealtimeScan', () => {
         },
       });
     });
-    expect(result.current.realtimeResults).toHaveLength(1);
+    expect(result.current.realtimeResults).toHaveLength(2);
   });
 
   it('skips results with missing filePath or fileHash', async () => {
@@ -385,11 +396,13 @@ describe('useRealtimeScan', () => {
         callCount++;
         if (callCount <= 1) return Promise.resolve([]);
         return Promise.resolve([{
+          id: 1,
           file_hash: 'new1',
           file_path: 'C:\\test\\new.exe',
           verdict: 'Malware',
           confidence: 0.8,
           threat_level: 'HIGH',
+          threat_name: 'Trojan.Test',
           scanned_at: 1700000000,
         }]);
       }

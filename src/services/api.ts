@@ -290,8 +290,8 @@ export async function clearUserWhitelist(): Promise<number> {
 /**
  * Ignore a threat: whitelist its hash, remove from verdicts, prevent future detections
  */
-export async function ignoreThreat(fileHash: string): Promise<void> {
-  return safeInvoke<void>('ignore_threat', { fileHash });
+export async function ignoreThreat(fileHash: string, filePath?: string): Promise<void> {
+  return safeInvoke<void>('ignore_threat', { fileHash, filePath: filePath ?? null });
 }
 
 import type { FilePersistenceContext } from '../types/insights';

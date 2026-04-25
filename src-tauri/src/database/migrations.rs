@@ -896,6 +896,106 @@ impl Migration for Migration012NetworkSecurity {
     }
 }
 
+/// Migration 13: Rebuild verdicts for per-path history instead of hash replacement.
+struct Migration013VerdictsPerPathHistory;
+
+impl Migration for Migration013VerdictsPerPathHistory {
+    fn version(&self) -> u32 {
+        13
+    }
+    fn name(&self) -> &'static str {
+        "verdicts_per_path_history"
+    }
+
+    fn up(&self, conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "
+            CREATE TABLE verdicts_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                threat_level TEXT NOT NULL,
+                threat_name TEXT,
+                scan_time_ms INTEGER NOT NULL,
+                scanned_at INTEGER NOT NULL,
+                file_id INTEGER,
+                source TEXT NOT NULL DEFAULT 'realtime'
+            );
+
+            INSERT INTO verdicts_new
+                (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, file_id, source)
+            SELECT
+                id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, file_id, COALESCE(source, 'realtime')
+            FROM verdicts
+            ORDER BY id;
+
+            DROP TABLE verdicts;
+            ALTER TABLE verdicts_new RENAME TO verdicts;
+
+            CREATE INDEX IF NOT EXISTS idx_verdicts_hash ON verdicts(file_hash);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_scanned_at ON verdicts(scanned_at);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_scanned_desc ON verdicts(scanned_at DESC, file_hash, verdict);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_file_id ON verdicts(file_id);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_source ON verdicts(source);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_path_scanned ON verdicts(file_path, scanned_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_path_norm_scanned ON verdicts(LOWER(REPLACE(file_path, '/', '\')), scanned_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_verdict ON verdicts(verdict);
+            CREATE INDEX IF NOT EXISTS idx_quarantine_original_path_norm ON quarantine(LOWER(REPLACE(original_path, '/', '\')), permanently_deleted, restored_at);
+        ",
+        )?;
+        Ok(())
+    }
+
+    fn down(&self, conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "
+            CREATE TABLE verdicts_old (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_hash TEXT NOT NULL UNIQUE,
+                file_path TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                threat_level TEXT NOT NULL,
+                threat_name TEXT,
+                scan_time_ms INTEGER NOT NULL,
+                scanned_at INTEGER NOT NULL,
+                file_id INTEGER,
+                source TEXT NOT NULL DEFAULT 'realtime'
+            );
+
+            INSERT OR REPLACE INTO verdicts_old
+                (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, file_id, source)
+            SELECT
+                v.id, v.file_hash, v.file_path, v.verdict, v.confidence, v.threat_level, v.threat_name, v.scan_time_ms, v.scanned_at, v.file_id, COALESCE(v.source, 'realtime')
+            FROM verdicts v
+            WHERE v.id = (
+                SELECT v2.id
+                FROM verdicts v2
+                WHERE v2.file_hash = v.file_hash
+                ORDER BY v2.scanned_at DESC, v2.id DESC
+                LIMIT 1
+            );
+
+            DROP TABLE verdicts;
+            ALTER TABLE verdicts_old RENAME TO verdicts;
+
+            CREATE INDEX IF NOT EXISTS idx_verdicts_hash ON verdicts(file_hash);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_scanned_at ON verdicts(scanned_at);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_scanned_desc ON verdicts(scanned_at DESC, file_hash, verdict);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_file_id ON verdicts(file_id);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_source ON verdicts(source);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_path_scanned ON verdicts(file_path, scanned_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_verdicts_verdict ON verdicts(verdict);
+            DROP INDEX IF EXISTS idx_verdicts_path_norm_scanned;
+            DROP INDEX IF EXISTS idx_quarantine_original_path_norm;
+        ",
+        )?;
+        Ok(())
+    }
+}
+
 fn get_all_migrations() -> Vec<&'static dyn Migration> {
     vec![
         &Migration001InitialSchema,
@@ -910,6 +1010,7 @@ fn get_all_migrations() -> Vec<&'static dyn Migration> {
         &Migration010AddVerdictSource,
         &Migration011UserWhitelist,
         &Migration012NetworkSecurity,
+        &Migration013VerdictsPerPathHistory,
     ]
 }
 
@@ -1082,5 +1183,35 @@ mod tests {
     #[test]
     fn test_latest_version() {
         assert!(latest_version() >= 6);
+    }
+
+    #[test]
+    fn test_latest_schema_allows_duplicate_hashes_on_different_paths() {
+        let conn = create_test_db();
+        let migrator = Migrator::new(&conn);
+        migrator.migrate_to_latest().unwrap();
+
+        conn.execute(
+            "INSERT INTO verdicts (file_hash, file_path, verdict, confidence, threat_level, scan_time_ms, scanned_at, source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params!["samehash", "C:\\one\\sample.exe", "Suspicious", 0.6, "MEDIUM", 10, 100_i64, "realtime"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO verdicts (file_hash, file_path, verdict, confidence, threat_level, scan_time_ms, scanned_at, source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params!["samehash", "C:\\two\\sample.exe", "Suspicious", 0.7, "MEDIUM", 10, 101_i64, "realtime"],
+        )
+        .unwrap();
+
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM verdicts WHERE file_hash = 'samehash'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count, 2);
     }
 }

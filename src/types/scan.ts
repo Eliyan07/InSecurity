@@ -24,6 +24,7 @@ export enum Verdict {
 import type { DetailedResults } from './threatIntel';
 
 export interface ScanResult {
+  threatId: string;
   fileHash: string;
   verdict: Verdict;
   confidence: number;

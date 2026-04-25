@@ -73,6 +73,7 @@ describe('Dashboard', () => {
   it('passes realtimeResults to RealtimeResults component', () => {
     const results: ScanResult[] = [
       {
+        threatId: 'threat-1',
         fileHash: 'abc123',
         verdict: Verdict.MALWARE,
         confidence: 0.95,

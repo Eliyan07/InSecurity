@@ -4,6 +4,12 @@ use crate::database::queries::DatabaseQueries;
 /// Quarantine commands
 use serde::{Deserialize, Serialize};
 
+fn normalize_path_identity(path: &str) -> String {
+    path.replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
 fn validate_hash(hash: &str) -> Result<(), String> {
     let hash = hash.trim();
     if hash.is_empty() {
@@ -172,7 +178,7 @@ pub async fn quarantine_file_by_path(
 /// Also adds the file hash to the whitelist to prevent future false positive detections
 /// and records the decision in user_whitelist so the user can review/undo it later.
 #[tauri::command]
-pub async fn ignore_threat(file_hash: String) -> Result<(), String> {
+pub async fn ignore_threat(file_hash: String, file_path: Option<String>) -> Result<(), String> {
     validate_hash(&file_hash)?;
     let file_hash = file_hash.trim().to_lowercase();
 
@@ -193,21 +199,39 @@ pub async fn ignore_threat(file_hash: String) -> Result<(), String> {
     }
 
     let hash_clone = file_hash.clone();
+    let requested_path = file_path.clone();
+    let requested_path_norm = file_path.as_ref().map(|path| normalize_path_identity(path));
     crate::with_db_async(move |conn| {
-        // Capture file_path and verdict from verdicts table before deleting
-        let (file_path, original_verdict): (Option<String>, Option<String>) = conn
-            .query_row(
-                "SELECT file_path, verdict FROM verdicts WHERE file_hash = ?1",
-                rusqlite::params![hash_clone],
-                |row| Ok((row.get(0).ok(), row.get(1).ok())),
-            )
-            .unwrap_or((None, None));
+        // Capture file_path and verdict from verdicts table before deleting.
+        let (stored_file_path, original_verdict): (Option<String>, Option<String>) =
+            if let Some(ref path_norm) = requested_path_norm {
+                conn.query_row(
+                    "SELECT file_path, verdict FROM verdicts
+                     WHERE file_hash = ?1 AND LOWER(REPLACE(file_path, '/', '\\')) = ?2
+                     ORDER BY scanned_at DESC, id DESC
+                     LIMIT 1",
+                    rusqlite::params![hash_clone, path_norm],
+                    |row| Ok((row.get(0).ok(), row.get(1).ok())),
+                )
+                .unwrap_or((requested_path.clone(), None))
+            } else {
+                conn.query_row(
+                    "SELECT file_path, verdict FROM verdicts
+                     WHERE file_hash = ?1
+                     ORDER BY scanned_at DESC, id DESC
+                     LIMIT 1",
+                    rusqlite::params![hash_clone],
+                    |row| Ok((row.get(0).ok(), row.get(1).ok())),
+                )
+                .unwrap_or((None, None))
+            };
+        let whitelist_path = requested_path.or(stored_file_path);
 
         // Record in user_whitelist so user can review/undo from Settings
         let now = chrono::Utc::now().timestamp();
         let _ = conn.execute(
             "INSERT OR IGNORE INTO user_whitelist (file_hash, file_path, original_verdict, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![hash_clone, file_path, original_verdict, now],
+            rusqlite::params![hash_clone, whitelist_path, original_verdict, now],
         );
 
         conn.execute(
@@ -235,6 +259,7 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
 
     let fp = file_path.clone();
     let fh = file_hash.clone();
+    let requested_path_norm = normalize_path_identity(&file_path);
     tauri::async_runtime::spawn_blocking(move || {
         use std::fs;
 
@@ -244,8 +269,10 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
                 if let Ok(guard) = crate::DB.lock() {
                     if let Some(ref conn) = *guard {
                         let _ = conn.execute(
-                            "DELETE FROM verdicts WHERE file_hash = ?1",
-                            rusqlite::params![fh],
+                            "DELETE FROM verdicts
+                             WHERE file_hash = ?1
+                             AND LOWER(REPLACE(file_path, '/', '\\')) = ?2",
+                            rusqlite::params![fh, requested_path_norm],
                         );
                     }
                 }
@@ -256,6 +283,7 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
         };
 
         let path_str = canonical_path.to_string_lossy().to_lowercase();
+        let canonical_path_norm = normalize_path_identity(&canonical_path.to_string_lossy());
 
         // SECURITY: Block deletion of system files using canonicalized path
         let blocked_patterns = [
@@ -305,8 +333,10 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
         if let Ok(guard) = crate::DB.lock() {
             if let Some(ref conn) = *guard {
                 let _ = conn.execute(
-                    "DELETE FROM verdicts WHERE file_hash = ?1",
-                    rusqlite::params![fh],
+                    "DELETE FROM verdicts
+                     WHERE file_hash = ?1
+                     AND LOWER(REPLACE(file_path, '/', '\\')) = ?2",
+                    rusqlite::params![fh, canonical_path_norm],
                 );
             }
         }

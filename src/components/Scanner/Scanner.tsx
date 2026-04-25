@@ -36,15 +36,21 @@ export interface ScannerProps {
 type ThreatResolution = 'quarantined' | 'deleted' | 'whitelisted';
 
 // Helper to map scan-result event payload to ScanResult
-const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => ({
-  fileHash: (payload['file_hash'] as string) ?? (payload['fileHash'] as string) ?? '',
-  verdict: parseVerdict(payload['verdict']),
-  confidence: (payload['confidence'] as number) ?? 0,
-  threatLevel: (payload['threat_level'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? (payload['threatLevel'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? 'LOW',
-  threatName: (payload['threat_name'] as string) ?? (payload['threatName'] as string) ?? undefined,
-  scanTimeMs: (payload['scan_time_ms'] as number) ?? (payload['scanTimeMs'] as number) ?? 0,
-  filePath: (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '',
-});
+const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
+  const filePath = (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '';
+  const rawThreatId = payload['threat_id'] ?? payload['threatId'];
+
+  return {
+    threatId: rawThreatId != null ? String(rawThreatId) : filePath,
+    fileHash: (payload['file_hash'] as string) ?? (payload['fileHash'] as string) ?? '',
+    verdict: parseVerdict(payload['verdict']),
+    confidence: (payload['confidence'] as number) ?? 0,
+    threatLevel: (payload['threat_level'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? (payload['threatLevel'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? 'LOW',
+    threatName: (payload['threat_name'] as string) ?? (payload['threatName'] as string) ?? undefined,
+    scanTimeMs: (payload['scan_time_ms'] as number) ?? (payload['scanTimeMs'] as number) ?? 0,
+    filePath,
+  };
+};
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -525,7 +531,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   const handleIgnoreThreat = async (threat: ScanResult) => {
     setThreatActionLoading(threat.fileHash);
     try {
-      await ignoreThreat(threat.fileHash);
+      await ignoreThreat(threat.fileHash, threat.filePath);
       markThreatResolved(threat.fileHash, 'whitelisted');
     } catch (e) {
       setScanError(t('scanner.failedIgnore', { error: getErrorMessage(e) }));

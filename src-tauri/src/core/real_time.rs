@@ -459,6 +459,7 @@ pub struct ProcessInfo {
 /// The watcher thread reads this on every event instead of re-loading Settings.
 static RANSOMWARE_THRESHOLD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
 static RANSOMWARE_WINDOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(10);
+const NON_CANARY_ALERT_MIN_AVG_ENTROPY: f64 = 7.4;
 
 /// Adaptive per-folder threshold overrides (folder -> (threshold, expiry Instant))
 /// Set when user dismisses a false positive; expires after 1 hour.
@@ -712,6 +713,7 @@ fn file_entropy(path: &str) -> f64 {
 }
 
 /// Check if a file has a common document extension (ransomware targets).
+#[allow(dead_code)]
 fn is_document_extension(path: &str) -> bool {
     let lower = path.to_lowercase();
     const DOC_EXTS: &[&str] = &[
@@ -806,6 +808,17 @@ fn filter_actionable_ransomware_suspects(suspects: Vec<ProcessInfo>) -> Vec<Proc
         .into_iter()
         .filter(|proc| !is_benign_ransomware_suspect(proc))
         .collect()
+}
+
+fn should_emit_non_canary_ransomware_alert(
+    modification_count: u32,
+    effective_threshold: u32,
+    average_entropy: f64,
+    suspects: &[ProcessInfo],
+) -> bool {
+    modification_count >= effective_threshold
+        && average_entropy >= NON_CANARY_ALERT_MIN_AVG_ENTROPY
+        && !suspects.is_empty()
 }
 
 // ── Process identification & termination ───────────────────────────────
@@ -1301,27 +1314,9 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         let ent = file_entropy(&path_str);
                                         ransomware_tracker.record_entropy(&protected_folder, ent);
 
-                                        // Fast-path: if a document file has extremely high entropy (>7.9)
-                                        // AND we've seen at least 5 modifications, fire early
-                                        let fast_trigger = ent > 7.9
-                                            && is_document_extension(&path_str)
-                                            && ransomware_tracker
-                                                .counts
-                                                .get(&protected_folder)
-                                                .map(|(c, _)| *c >= 5)
-                                                .unwrap_or(false);
-
-                                        // Check for bulk modification pattern (or fast trigger)
-                                        let alert_count = if fast_trigger {
-                                            let count = ransomware_tracker
-                                                .counts
-                                                .get(&protected_folder)
-                                                .map(|(c, _)| *c)
-                                                .unwrap_or(0);
-                                            Some(count)
-                                        } else {
-                                            ransomware_tracker.track_modification(&protected_folder)
-                                        };
+                                        // Non-canary alerts must still pass the folder threshold.
+                                        let alert_count = ransomware_tracker
+                                            .track_modification(&protected_folder);
 
                                         if let Some(count) = alert_count {
                                             let window_secs =
@@ -1342,13 +1337,30 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                             let suspects = filter_actionable_ransomware_suspects(
                                                 identify_modifying_processes(&protected_folder),
                                             );
-                                            if suspects.is_empty()
-                                                && current_avg_ent < 7.5
-                                                && !fast_trigger
-                                            {
+                                            let effective_threshold =
+                                                effective_threshold_for(&protected_folder);
+                                            if !should_emit_non_canary_ransomware_alert(
+                                                count,
+                                                effective_threshold,
+                                                current_avg_ent,
+                                                &suspects,
+                                            ) {
+                                                let suppression_reason = if suspects.is_empty() {
+                                                    format!(
+                                                        "no actionable suspects remain after trusted/dev filtering in {}",
+                                                        protected_folder
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "avg entropy {:.2} is below non-canary alert threshold {:.2} in {}",
+                                                        current_avg_ent,
+                                                        NON_CANARY_ALERT_MIN_AVG_ENTROPY,
+                                                        protected_folder
+                                                    )
+                                                };
                                                 log::info!(
-                                                    "Ransomware alert suppressed - no actionable suspects and avg entropy {:.2} in {}",
-                                                    current_avg_ent, protected_folder
+                                                    "Non-canary ransomware alert suppressed - {}",
+                                                    suppression_reason
                                                 );
                                                 continue;
                                             }
@@ -1385,6 +1397,15 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 continue;
                                             }
 
+                                            log::warn!(
+                                                "Potential ransomware-like activity: {} files modified in {} within {} seconds (avg entropy: {:.2}, suspects: {})",
+                                                count,
+                                                protected_folder,
+                                                window_secs,
+                                                current_avg_ent,
+                                                suspects.len()
+                                            );
+
                                             // Auto-block: terminate suspects if enabled
                                             let cfg_snap = crate::config::Settings::load();
                                             let killed = if cfg_snap.ransomware_auto_block {
@@ -1401,11 +1422,7 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 modification_count: count,
                                                 time_window_seconds: window_secs,
                                                 sample_files,
-                                                alert_level: if fast_trigger {
-                                                    "CRITICAL_HIGH_ENTROPY".to_string()
-                                                } else {
-                                                    "CRITICAL".to_string()
-                                                },
+                                                alert_level: "HEURISTIC".to_string(),
                                                 suspected_processes: suspects,
                                                 processes_killed: killed.clone(),
                                                 average_entropy: avg_ent,
@@ -1446,7 +1463,7 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                     );
                                                     let mut builder = app.notification()
                                                         .builder()
-                                                        .title("InSecurity - Ransomware Behavior Detected")
+                                                        .title("InSecurity - Possible Ransomware-Like Activity")
                                                         .body(&body);
 
                                                     if let Some(icon_path) =
@@ -1466,7 +1483,7 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                             // Log to audit journal
                                             crate::core::log_audit_event(
                                                 crate::core::AuditEventType::ThreatDetected,
-                                                &format!("Ransomware behavior detected: {} bulk modifications in {} (entropy: {:.2}, killed: {})",
+                                                &format!("Possible ransomware-like behavior detected: {} bulk modifications in {} (entropy: {:.2}, killed: {})",
                                                     count, protected_folder, avg_ent, killed.len()),
                                                 None,
                                                 Some(&format!("alert_level={},folder={},entropy={:.2},processes_killed={}",
@@ -1962,6 +1979,38 @@ mod tests {
         }
 
         RANSOMWARE_THRESHOLD.store(original_threshold, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_non_canary_alert_requires_actionable_suspect() {
+        let suspects: Vec<ProcessInfo> = Vec::new();
+        assert!(!should_emit_non_canary_ransomware_alert(
+            20, 20, 7.9, &suspects,
+        ));
+    }
+
+    #[test]
+    fn test_non_canary_alert_requires_high_entropy() {
+        let suspects = vec![ProcessInfo {
+            pid: 4242,
+            name: "weird.exe".to_string(),
+            exe_path: "C:\\Users\\test\\Downloads\\weird.exe".to_string(),
+        }];
+        assert!(!should_emit_non_canary_ransomware_alert(
+            20, 20, 7.1, &suspects,
+        ));
+    }
+
+    #[test]
+    fn test_non_canary_alert_fires_with_threshold_entropy_and_suspect() {
+        let suspects = vec![ProcessInfo {
+            pid: 4242,
+            name: "weird.exe".to_string(),
+            exe_path: "C:\\Users\\test\\Downloads\\weird.exe".to_string(),
+        }];
+        assert!(should_emit_non_canary_ransomware_alert(
+            20, 20, 7.9, &suspects,
+        ));
     }
 
     #[test]

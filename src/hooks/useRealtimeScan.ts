@@ -3,6 +3,9 @@ import { safeInvoke, safeListen } from '../services/api';
 import type { ScanResult, ScanStatus, DetailedResults } from '../types/scan';
 import { parseVerdict } from '../utils/verdict';
 
+const normalizePathKey = (filePath: string) =>
+  filePath.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+
 export function useRealtimeScan(activeNav?: string) {
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [realtimeResults, setRealtimeResults] = useState<ScanResult[]>([]);
@@ -19,16 +22,22 @@ export function useRealtimeScan(activeNav?: string) {
   };
 
   // Helper to map event payload to ScanResult
-  const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => ({
-    fileHash: (payload['file_hash'] as string) ?? (payload['fileHash'] as string) ?? '',
-    verdict: parseVerdict(payload['verdict']),
-    confidence: (payload['confidence'] as number) ?? 0,
-    threatLevel: (payload['threat_level'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? (payload['threatLevel'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? 'LOW',
-    threatName: (payload['threat_name'] as string) ?? (payload['threatName'] as string) ?? undefined,
-    scanTimeMs: (payload['scan_time_ms'] as number) ?? (payload['scanTimeMs'] as number) ?? 0,
-    filePath: (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '',
-    detailedResults: parseDetailedResults(payload),
-  });
+  const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
+    const filePath = (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '';
+    const rawThreatId = payload['threat_id'] ?? payload['threatId'];
+
+    return {
+      threatId: rawThreatId != null ? String(rawThreatId) : filePath,
+      fileHash: (payload['file_hash'] as string) ?? (payload['fileHash'] as string) ?? '',
+      verdict: parseVerdict(payload['verdict']),
+      confidence: (payload['confidence'] as number) ?? 0,
+      threatLevel: (payload['threat_level'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? (payload['threatLevel'] as 'HIGH' | 'MEDIUM' | 'LOW') ?? 'LOW',
+      threatName: (payload['threat_name'] as string) ?? (payload['threatName'] as string) ?? undefined,
+      scanTimeMs: (payload['scan_time_ms'] as number) ?? (payload['scanTimeMs'] as number) ?? 0,
+      filePath,
+      detailedResults: parseDetailedResults(payload),
+    };
+  };
 
   // Listen for REALTIME scan results (from real-time protection)
   useEffect(() => {
@@ -51,18 +60,15 @@ export function useRealtimeScan(activeNav?: string) {
           }
           
           setRealtimeResults(prev => {
-            // Deduplicate by file path - same file scanned multiple times should update, not duplicate
-            // Also check hash to handle case where file content changed
-            const existingByPath = prev.findIndex(r => r.filePath === mapped.filePath);
+            const mappedPathKey = normalizePathKey(mapped.filePath);
+            // Deduplicate by normalized file path only. Same content in a different
+            // folder should remain visible as a separate threat instance.
+            const existingByPath = prev.findIndex(r => normalizePathKey(r.filePath) === mappedPathKey);
             if (existingByPath !== -1) {
               // Replace existing entry with newer scan result
               const next = [...prev];
               next.splice(existingByPath, 1);
               return [mapped, ...next].slice(0, MAX_RESULTS);
-            }
-            // Also skip if same hash already exists (different path, same content)
-            if (prev.some(r => r.fileHash === mapped.fileHash)) {
-              return prev;
             }
             const next = [mapped, ...prev];
             if (next.length > MAX_RESULTS) next.length = MAX_RESULTS;
@@ -117,11 +123,13 @@ export function useRealtimeScan(activeNav?: string) {
   // Load historical threats from database on mount
   const loadActiveThreats = useCallback(async () => {
     interface VerdictRecord {
+      id: number;
       file_hash: string;
       file_path: string;
       verdict: string;
       confidence: number;
       threat_level: string;
+      threat_name?: string;
       scanned_at: number;
     }
 
@@ -135,11 +143,12 @@ export function useRealtimeScan(activeNav?: string) {
         .map(r => {
           const parsedVerdict = parseVerdict(r.verdict);
           return {
+            threatId: String(r.id),
             fileHash: r.file_hash,
             verdict: parsedVerdict,
             confidence: r.confidence,
             threatLevel: (r.threat_level as 'HIGH' | 'MEDIUM' | 'LOW') || 'LOW',
-            threatName: undefined,
+            threatName: r.threat_name,
             scanTimeMs: 0,
             filePath: r.file_path,
           };
@@ -177,9 +186,9 @@ export function useRealtimeScan(activeNav?: string) {
 
   const clearResults = useCallback(() => setRealtimeResults([]), []);
 
-  // Remove a specific result by file hash (used when threat is resolved)
-  const removeResult = useCallback((fileHash: string) => {
-    setRealtimeResults(prev => prev.filter(r => r.fileHash !== fileHash));
+  // Remove a specific result by threat id (used when threat is resolved)
+  const removeResult = useCallback((threatId: string) => {
+    setRealtimeResults(prev => prev.filter(r => r.threatId !== threatId));
   }, []);
 
   // Refresh active threats from database (used after dashboard refresh)

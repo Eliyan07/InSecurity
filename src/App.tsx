@@ -259,8 +259,8 @@ function App() {
 
 
   // Handle threat resolution - remove from results and refresh dashboard
-  const handleThreatResolved = useCallback(async (fileHash: string) => {
-    removeResult(fileHash);
+  const handleThreatResolved = useCallback(async (threatId: string) => {
+    removeResult(threatId);
     await refreshDashboard();
     // No need to refresh active threats here - removeResult already did it locally
   }, [removeResult, refreshDashboard]);
@@ -368,10 +368,21 @@ function App() {
                 <div className="alert-recommendations">
                   <h4>{t('ransomware.recommendedActions')}</h4>
                   <ol>
-                    <li>{t('ransomware.disconnectNetwork')}</li>
-                    <li>{t('ransomware.killProcesses')}</li>
-                    <li>{t('ransomware.runFullScan')}</li>
-                    <li>{t('ransomware.checkBackups')}</li>
+                    {ransomwareAlert.alert_level === 'CRITICAL_CANARY' ? (
+                      <>
+                        <li>{t('ransomware.disconnectNetwork')}</li>
+                        <li>{t('ransomware.killProcesses')}</li>
+                        <li>{t('ransomware.runFullScan')}</li>
+                        <li>{t('ransomware.checkBackups')}</li>
+                      </>
+                    ) : (
+                      <>
+                        <li>{t('ransomware.reviewProcesses')}</li>
+                        <li>{t('ransomware.runFullScan')}</li>
+                        <li>{t('ransomware.verifyRecentActivity')}</li>
+                        <li>{t('ransomware.markFalsePositiveAction')}</li>
+                      </>
+                    )}
                   </ol>
                 </div>
               </div>

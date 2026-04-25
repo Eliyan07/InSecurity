@@ -289,9 +289,9 @@
   },
   "ransomware": {
     "canaryTripwire": "Canary Tripwire Triggered!",
-    "activityDetected": "Suspicious Ransomware-Like Activity",
+    "activityDetected": "Possible Ransomware-Like Activity",
     "honeypotTampered": "A honeypot file was tampered with — this is a strong indicator of ransomware or malicious file encryption.",
-    "bulkModifications": "Rapid bulk file modifications were detected in a protected folder. This can happen during legitimate app activity, but it may also indicate ransomware or unwanted encryption.",
+    "bulkModifications": "Rapid bulk file modifications were detected in a protected folder. This is a heuristic warning, not a confirmation of ransomware, but it can indicate unwanted encryption.",
     "falsePositiveHint": "If you recognize this activity, mark it as a false positive to temporarily relax ransomware detection for this folder.",
     "protectedFolder": "Protected Folder:",
     "filesModified": "Files Modified:",
@@ -305,8 +305,11 @@
     "recommendedActions": "Recommended Actions:",
     "disconnectNetwork": "Disconnect from the network immediately",
     "killProcesses": "Kill any suspected processes above",
+    "reviewProcesses": "Review the related processes shown above",
     "runFullScan": "Run a full system scan",
     "checkBackups": "Check your backups",
+    "verifyRecentActivity": "Verify whether a recent app, sync client, export, or batch job caused these changes",
+    "markFalsePositiveAction": "If you recognize the activity, mark it as a false positive",
     "markFalsePositive": "Mark False Positive",
     "acknowledge": "Close Alert"
   },
