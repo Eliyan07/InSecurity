@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   startScan,
   cancelScan,
@@ -34,6 +34,21 @@ export interface ScannerProps {
 }
 
 type ThreatResolution = 'quarantined' | 'deleted' | 'whitelisted';
+
+const normalizePathKey = (filePath: string) =>
+  filePath.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+
+const getThreatIdentity = (threat: Pick<ScanResult, 'filePath' | 'threatId'>): string =>
+  normalizePathKey(threat.filePath || threat.threatId);
+
+const getFolderHint = (filePath: string): string => {
+  const parts = filePath.replace(/\//g, '\\').split('\\').filter(Boolean);
+  const directories = parts.slice(0, -1);
+  if (directories.length === 0) {
+    return filePath;
+  }
+  return directories.slice(-2).join('\\');
+};
 
 // Helper to map scan-result event payload to ScanResult
 const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
@@ -107,14 +122,14 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   const threatBufferRef = useRef<ScanResult[]>([]);
   const flushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const markThreatResolved = useCallback((fileHash: string, resolution: ThreatResolution) => {
+  const markThreatResolved = useCallback((threatIdentity: string, resolution: ThreatResolution) => {
     setThreatResolutions(prev => {
-      if (prev[fileHash] === resolution) {
+      if (prev[threatIdentity] === resolution) {
         return prev;
       }
       return {
         ...prev,
-        [fileHash]: resolution,
+        [threatIdentity]: resolution,
       };
     });
   }, []);
@@ -125,11 +140,12 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
       const buffered = threatBufferRef.current;
       threatBufferRef.current = [];
       setScanThreats(prev => {
-        const existingHashes = new Set(prev.map(r => r.fileHash));
+        const existingThreats = new Set(prev.map(getThreatIdentity));
         const seenInBatch = new Set<string>();
         const newThreats = buffered.filter(r => {
-          if (existingHashes.has(r.fileHash) || seenInBatch.has(r.fileHash)) return false;
-          seenInBatch.add(r.fileHash);
+          const threatIdentity = getThreatIdentity(r);
+          if (existingThreats.has(threatIdentity) || seenInBatch.has(threatIdentity)) return false;
+          seenInBatch.add(threatIdentity);
           return true;
         });
         if (newThreats.length === 0) return prev;
@@ -163,7 +179,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
                   return;
                 }
                 setAutoQuarantinedCount(prev => prev + 1);
-                markThreatResolved(result.fileHash, 'quarantined');
+                markThreatResolved(getThreatIdentity(result), 'quarantined');
               });
             }
           }
@@ -497,7 +513,8 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
 
   // Threat action handlers
   const handleQuarantineThreat = async (threat: ScanResult) => {
-    setThreatActionLoading(threat.fileHash);
+    const threatIdentity = getThreatIdentity(threat);
+    setThreatActionLoading(threatIdentity);
     try {
       await safeInvoke('quarantine_file_by_path', {
         filePath: threat.filePath,
@@ -505,7 +522,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
         verdict: threat.verdict === Verdict.MALWARE ? 'malware' : 'suspicious',
         threatLevel: threat.threatLevel.toLowerCase(),
       });
-      markThreatResolved(threat.fileHash, 'quarantined');
+      markThreatResolved(threatIdentity, 'quarantined');
     } catch (e) {
       setScanError(t('scanner.failedQuarantine', { error: getErrorMessage(e) }));
     } finally {
@@ -514,13 +531,14 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   };
 
   const handleDeleteThreat = async (threat: ScanResult) => {
-    setThreatActionLoading(threat.fileHash);
+    const threatIdentity = getThreatIdentity(threat);
+    setThreatActionLoading(threatIdentity);
     try {
       await safeInvoke('delete_threat_file', {
         filePath: threat.filePath,
         fileHash: threat.fileHash,
       });
-      markThreatResolved(threat.fileHash, 'deleted');
+      markThreatResolved(threatIdentity, 'deleted');
     } catch (e) {
       setScanError(t('scanner.failedDelete', { error: getErrorMessage(e) }));
     } finally {
@@ -529,10 +547,11 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   };
 
   const handleIgnoreThreat = async (threat: ScanResult) => {
-    setThreatActionLoading(threat.fileHash);
+    const threatIdentity = getThreatIdentity(threat);
+    setThreatActionLoading(threatIdentity);
     try {
       await ignoreThreat(threat.fileHash, threat.filePath);
-      markThreatResolved(threat.fileHash, 'whitelisted');
+      markThreatResolved(threatIdentity, 'whitelisted');
     } catch (e) {
       setScanError(t('scanner.failedIgnore', { error: getErrorMessage(e) }));
     } finally {
@@ -541,7 +560,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   };
 
   const handleQuarantineAll = async () => {
-    const unresolvedThreats = scanThreats.filter(t => !threatResolutions[t.fileHash]);
+    const unresolvedThreats = scanThreats.filter(t => !threatResolutions[getThreatIdentity(t)]);
     for (const threat of unresolvedThreats) {
       await handleQuarantineThreat(threat);
     }
@@ -584,7 +603,15 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   };
 
   // Get unresolved threats
-  const unresolvedThreats = scanThreats.filter(t => !threatResolutions[t.fileHash]);
+  const unresolvedThreats = scanThreats.filter(t => !threatResolutions[getThreatIdentity(t)]);
+  const basenameCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const threat of scanThreats) {
+      const basename = getFileName(threat.filePath);
+      counts.set(basename, (counts.get(basename) ?? 0) + 1);
+    }
+    return counts;
+  }, [scanThreats]);
 
   const getThreatResolutionMeta = (resolution: ThreatResolution) => {
     switch (resolution) {
@@ -906,20 +933,28 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
 
               <div className="threats-list">
                 {scanThreats.map(threat => {
-                  const resolution = threatResolutions[threat.fileHash];
+                  const threatIdentity = getThreatIdentity(threat);
+                  const resolution = threatResolutions[threatIdentity];
                   const isResolved = !!resolution;
                   const resolutionMeta = resolution ? getThreatResolutionMeta(resolution) : null;
+                  const basename = getFileName(threat.filePath);
+                  const showFolderHint = (basenameCounts.get(basename) ?? 0) > 1;
                   return (
-                    <div key={threat.fileHash} className={`threat-item ${getVerdictClass(threat.verdict)} ${isResolved ? 'resolved' : ''}`}>
+                    <div key={threatIdentity} className={`threat-item ${getVerdictClass(threat.verdict)} ${isResolved ? 'resolved' : ''}`}>
                       <div className="threat-info">
                         <div className="threat-name">
                           <span className={`threat-badge ${getVerdictClass(threat.verdict)}`}>
                             {t(getVerdictKey(threat.verdict))}
                           </span>
                           <span className="threat-filename" title={threat.filePath}>
-                            {getFileName(threat.filePath)}
+                            {basename}
                           </span>
                         </div>
+                        {showFolderHint && (
+                          <div className="threat-folder-hint" title={threat.filePath}>
+                            {getFolderHint(threat.filePath)}
+                          </div>
+                        )}
                         <div className="threat-path" title={threat.filePath}>
                           {threat.filePath.length > 60 ? '...' + threat.filePath.slice(-57) : threat.filePath}
                         </div>
@@ -937,9 +972,9 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
                           <button
                             className="btn-threat-action quarantine"
                             onClick={() => handleQuarantineThreat(threat)}
-                            disabled={threatActionLoading === threat.fileHash}
+                            disabled={threatActionLoading === threatIdentity}
                           >
-                            {threatActionLoading === threat.fileHash ? (
+                            {threatActionLoading === threatIdentity ? (
                               <span className="loading-spinner"></span>
                             ) : (
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -951,7 +986,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
                           <button
                             className="btn-threat-action delete"
                             onClick={() => handleDeleteThreat(threat)}
-                            disabled={threatActionLoading === threat.fileHash}
+                            disabled={threatActionLoading === threatIdentity}
                           >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <polyline points="3 6 5 6 21 6" />
@@ -962,7 +997,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
                           <button
                             className="btn-threat-action ignore"
                             onClick={() => handleIgnoreThreat(threat)}
-                            disabled={threatActionLoading === threat.fileHash}
+                            disabled={threatActionLoading === threatIdentity}
                           >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M9 12l2 2 4-4" />

@@ -26,7 +26,7 @@ use chrono::Utc;
 // (e.g. extracting an archive containing several malicious files).
 //
 // Rules:
-//  • Same threat identity (file hash when available, otherwise path) → suppressed
+//  • Same threat identity (normalized path + hash when available) → suppressed
 //    for NOTIFICATION_DEDUP_SECS seconds
 //  • Global cap of MAX_NOTIFICATIONS_PER_WINDOW in a sliding window
 //  • When the cap is hit the extras are counted and a single
@@ -391,7 +391,8 @@ fn handle_realtime_scan_result(
         result.verdict,
         crate::core::pipeline::Verdict::Malware | crate::core::pipeline::Verdict::Suspicious
     ) {
-        send_threat_notification(app, &result.file_hash, file_path, &result);
+        let notification_identity = threat_notification_identity(file_path, &result.file_hash);
+        send_threat_notification(app, &notification_identity, file_path, &result);
     }
 
     let rec = DbVerdict {
@@ -460,6 +461,8 @@ pub struct ProcessInfo {
 static RANSOMWARE_THRESHOLD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
 static RANSOMWARE_WINDOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(10);
 const NON_CANARY_ALERT_MIN_AVG_ENTROPY: f64 = 7.4;
+const NON_CANARY_OUTSIDE_FOLDER_MIN_WRITTEN_BYTES: u64 = 8 * 1024 * 1024;
+const NON_CANARY_INSIDE_FOLDER_MIN_WRITTEN_BYTES: u64 = 1 * 1024 * 1024;
 
 /// Adaptive per-folder threshold overrides (folder -> (threshold, expiry Instant))
 /// Set when user dismisses a false positive; expires after 1 hour.
@@ -635,6 +638,24 @@ fn normalize_path_for_comparison(path: &str) -> String {
         .to_lowercase()
 }
 
+fn path_is_within_folder(path_norm: &str, folder_norm: &str) -> bool {
+    path_norm.starts_with(folder_norm)
+        && (path_norm.len() == folder_norm.len()
+            || path_norm.as_bytes().get(folder_norm.len()) == Some(&b'\\'))
+}
+
+fn threat_notification_identity(file_path: &str, file_hash: &str) -> String {
+    let normalized_path = normalize_path_for_comparison(file_path);
+    let normalized_hash = file_hash.trim().to_lowercase();
+
+    match (normalized_path.is_empty(), normalized_hash.is_empty()) {
+        (false, false) => format!("{}|{}", normalized_path, normalized_hash),
+        (false, true) => normalized_path,
+        (true, false) => normalized_hash,
+        (true, true) => file_path.to_string(),
+    }
+}
+
 /// Check if a path is within a protected folder.
 /// Uses normalized path comparison to handle mixed slashes and trailing separators.
 fn is_in_protected_folder(path: &str) -> Option<String> {
@@ -648,10 +669,7 @@ fn is_in_protected_folder(path: &str) -> Option<String> {
         let folder_norm = normalize_path_for_comparison(folder);
         // Ensure match is at a directory boundary, not a partial name
         // e.g. "C:\Users\Doc" must not match "C:\Users\Documents\file.txt"
-        if path_norm.starts_with(&folder_norm)
-            && (path_norm.len() == folder_norm.len()
-                || path_norm.as_bytes().get(folder_norm.len()) == Some(&b'\\'))
-        {
+        if path_is_within_folder(&path_norm, &folder_norm) {
             return Some(folder.clone());
         }
     }
@@ -765,6 +783,15 @@ const DEV_TOOLCHAIN_PATHS: &[&str] = &[
     "\\appdata\\local\\programs\\", // Electron app user-install location (VS Code, Cursor, etc.)
 ];
 
+const USER_WRITABLE_SUSPECT_PATH_MARKERS: &[&str] = &[
+    "\\users\\",
+    "\\appdata\\",
+    "\\programdata\\",
+    "\\windows\\temp\\",
+    "\\temp\\",
+    "\\tmp\\",
+];
+
 /// Check if a process is a known developer tool running from a trusted install path.
 /// Reuses is_trusted_publisher_path() from utils.rs for general path validation,
 /// plus dev toolchain paths (e.g. .cargo, .rustup) to prevent spoofing.
@@ -797,6 +824,35 @@ fn is_trusted_ransomware_suspect(proc: &ProcessInfo) -> bool {
             | crate::core::signature::TrustLevel::PublisherMatch
             | crate::core::signature::TrustLevel::CA
     )
+}
+
+fn is_user_writable_ransomware_suspect_path(path: &str) -> bool {
+    let path_lower = normalize_path_for_comparison(path);
+    USER_WRITABLE_SUSPECT_PATH_MARKERS
+        .iter()
+        .any(|marker| path_lower.contains(marker))
+}
+
+fn has_actionable_non_canary_write_signal(
+    exe_path: &str,
+    protected_folder: &str,
+    written_bytes: u64,
+) -> bool {
+    let exe_norm = normalize_path_for_comparison(exe_path);
+    let folder_norm = normalize_path_for_comparison(protected_folder);
+    let inside_protected_folder = path_is_within_folder(&exe_norm, &folder_norm);
+
+    if !inside_protected_folder && !is_user_writable_ransomware_suspect_path(&exe_norm) {
+        return false;
+    }
+
+    let min_required_writes = if inside_protected_folder {
+        NON_CANARY_INSIDE_FOLDER_MIN_WRITTEN_BYTES
+    } else {
+        NON_CANARY_OUTSIDE_FOLDER_MIN_WRITTEN_BYTES
+    };
+
+    written_bytes >= min_required_writes
 }
 
 fn is_benign_ransomware_suspect(proc: &ProcessInfo) -> bool {
@@ -858,33 +914,23 @@ fn identify_modifying_processes(folder: &str) -> Vec<ProcessInfo> {
             continue;
         }
 
-        // Simple heuristic: processes with active disk write activity are suspects.
-        // sysinfo provides disk_usage().written_bytes for the process lifetime,
-        // which we can't diff here without a prior snapshot, so we look for
-        // processes whose exe is inside or below the protected folder — or any
-        // process with recent disk writes that is NOT a known-safe path.
         let disk = process.disk_usage();
-        if disk.written_bytes > 0 {
-            let name = process.name().to_string_lossy().to_string();
-            let exe_norm = normalize_path_for_comparison(&exe_path);
-
-            // Prioritise processes that are NOT under the protected folder
-            // (ransomware exe is usually outside the folder it encrypts)
-            let is_outside = !exe_norm.starts_with(&folder_norm);
-            if is_outside || disk.written_bytes > 1_000_000 {
-                suspects.push(ProcessInfo {
-                    pid: pid_u32,
-                    name,
-                    exe_path: exe_path.clone(),
-                });
-            }
+        if !has_actionable_non_canary_write_signal(&exe_path, folder, disk.written_bytes) {
+            continue;
         }
+
+        let name = process.name().to_string_lossy().to_string();
+        suspects.push(ProcessInfo {
+            pid: pid_u32,
+            name,
+            exe_path: exe_path.clone(),
+        });
     }
 
-    // Sort: processes with exe outside the protected folder first
+    // Sort: processes with exe outside the protected folder first.
     suspects.sort_by_key(|p| {
         let norm = normalize_path_for_comparison(&p.exe_path);
-        if norm.starts_with(&folder_norm) {
+        if path_is_within_folder(&norm, &folder_norm) {
             1
         } else {
             0
@@ -1880,6 +1926,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_path_is_within_folder_respects_boundaries() {
+        assert!(path_is_within_folder(
+            "c:\\users\\123\\documents\\report.docx",
+            "c:\\users\\123\\documents"
+        ));
+        assert!(!path_is_within_folder(
+            "c:\\users\\123\\documents-old\\report.docx",
+            "c:\\users\\123\\documents"
+        ));
+    }
+
+    #[test]
+    fn test_threat_notification_identity_distinguishes_same_hash_different_paths() {
+        let first = threat_notification_identity("C:\\Users\\123\\Downloads\\same.exe", "deadbeef");
+        let second = threat_notification_identity("D:\\Archive\\same.exe", "deadbeef");
+
+        assert_ne!(first, second);
+        assert!(first.contains("deadbeef"));
+        assert!(second.contains("deadbeef"));
+    }
+
     // ── Document extension detection ───────────────────────────────────
 
     #[test]
@@ -2249,6 +2317,38 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "weird.exe");
+    }
+
+    #[test]
+    fn test_non_canary_write_signal_requires_user_writable_or_protected_folder_path() {
+        assert!(!has_actionable_non_canary_write_signal(
+            "C:\\Program Files\\SomeApp\\app.exe",
+            "C:\\Users\\123\\Documents",
+            NON_CANARY_OUTSIDE_FOLDER_MIN_WRITTEN_BYTES * 2
+        ));
+    }
+
+    #[test]
+    fn test_non_canary_write_signal_requires_stronger_writes_outside_folder() {
+        assert!(!has_actionable_non_canary_write_signal(
+            "C:\\Users\\123\\Downloads\\weird.exe",
+            "C:\\Users\\123\\Documents",
+            NON_CANARY_OUTSIDE_FOLDER_MIN_WRITTEN_BYTES - 1
+        ));
+        assert!(has_actionable_non_canary_write_signal(
+            "C:\\Users\\123\\Downloads\\weird.exe",
+            "C:\\Users\\123\\Documents",
+            NON_CANARY_OUTSIDE_FOLDER_MIN_WRITTEN_BYTES
+        ));
+    }
+
+    #[test]
+    fn test_non_canary_write_signal_allows_protected_folder_writer_at_lower_threshold() {
+        assert!(has_actionable_non_canary_write_signal(
+            "C:\\Users\\123\\Documents\\odd-tool.exe",
+            "C:\\Users\\123\\Documents",
+            NON_CANARY_INSIDE_FOLDER_MIN_WRITTEN_BYTES
+        ));
     }
 
     #[test]

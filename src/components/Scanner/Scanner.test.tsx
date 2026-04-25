@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Scanner } from './Scanner';
 import * as api from '../../services/api';
 import type { ScanStatus } from '../../services/api';
@@ -161,8 +161,104 @@ describe('Scanner', () => {
 
     fireEvent.click(screen.getByText('Trust & Whitelist'));
 
-    await waitFor(() => expect(api.ignoreThreat).toHaveBeenCalledWith(hash));
+    await waitFor(() => expect(api.ignoreThreat).toHaveBeenCalledWith(hash, 'C:\\test\\sus.exe'));
     expect(screen.getByText('Whitelisted')).toBeInTheDocument();
     expect(screen.queryByText('Quarantined')).not.toBeInTheDocument();
+  });
+
+  it('keeps same-hash files in different folders separate in the manual scanner', async () => {
+    const listeners: Record<string, (event: { payload: Record<string, unknown> }) => void> = {};
+    const hash = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const scanningStatus = {
+      ...baseStatus,
+      isScanning: true,
+      filesScanned: 2,
+      progressPercent: 100,
+      suspiciousCount: 2,
+      elapsedSeconds: 1,
+      totalFiles: 2,
+      scanType: 'quick',
+    };
+    let currentStatus: ScanStatus = baseStatus;
+
+    vi.mocked(api.getScanStatus).mockImplementation(async () => currentStatus);
+    vi.mocked(api.startScan).mockImplementation(async () => {
+      currentStatus = scanningStatus;
+    });
+    vi.mocked(api.safeListen).mockImplementation(async (eventName: string, callback: any) => {
+      listeners[eventName] = callback;
+      return () => {
+        delete listeners[eventName];
+      };
+    });
+
+    render(<Scanner autoQuarantine={false} />);
+
+    await waitFor(() => expect(api.safeListen).toHaveBeenCalledTimes(2));
+
+    fireEvent.click(screen.getAllByText(/quick scan/i)[0]);
+    await waitFor(() => expect(api.startScan).toHaveBeenCalled());
+
+    await act(async () => {
+      listeners['scan-result']({
+        payload: {
+          file_hash: hash,
+          verdict: 'suspicious',
+          confidence: 0.65,
+          threat_level: 'MEDIUM',
+          scan_time_ms: 120,
+          threat_name: 'Suspicious.Activity',
+          file_path: 'C:\\test\\dup.exe',
+        },
+      });
+      listeners['scan-result']({
+        payload: {
+          file_hash: hash,
+          verdict: 'suspicious',
+          confidence: 0.66,
+          threat_level: 'MEDIUM',
+          scan_time_ms: 121,
+          threat_name: 'Suspicious.Activity',
+          file_path: 'D:\\other\\dup.exe',
+        },
+      });
+    });
+
+    currentStatus = {
+      ...scanningStatus,
+      isScanning: false,
+    };
+
+    await act(async () => {
+      listeners['scan-complete']({
+        payload: {
+          totalFiles: 2,
+          cleanCount: 0,
+          suspiciousCount: 2,
+          malwareCount: 0,
+          elapsedSeconds: 1,
+          scanType: 'quick',
+        },
+      });
+    });
+
+    await waitFor(() => expect(screen.getByText('C:\\test\\dup.exe')).toBeInTheDocument());
+    expect(screen.getByText('D:\\other\\dup.exe')).toBeInTheDocument();
+
+    const rows = screen.getAllByText('dup.exe');
+    expect(rows).toHaveLength(2);
+    expect(screen.getByText('C:\\test')).toBeInTheDocument();
+    expect(screen.getByText('D:\\other')).toBeInTheDocument();
+
+    const secondRow = screen.getByText('D:\\other\\dup.exe').closest('.threat-item');
+    expect(secondRow).not.toBeNull();
+    fireEvent.click(within(secondRow as HTMLElement).getByText('Trust & Whitelist'));
+
+    await waitFor(() => expect(api.ignoreThreat).toHaveBeenCalledWith(hash, 'D:\\other\\dup.exe'));
+
+    expect(screen.getByText('C:\\test\\dup.exe')).toBeInTheDocument();
+    expect(screen.getByText('D:\\other\\dup.exe')).toBeInTheDocument();
+    expect(screen.getByText('Whitelisted')).toBeInTheDocument();
+    expect(screen.getAllByText('Trust & Whitelist').length).toBeGreaterThanOrEqual(1);
   });
 });
