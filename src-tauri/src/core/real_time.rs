@@ -16,6 +16,7 @@ use crate::cache::cache_manager::CacheConfig;
 use crate::commands::scan::set_current_file;
 use crate::core::pipeline::ScanResult;
 use crate::core::utils::{is_dev_build_artifact_path, is_scannable_file, is_system_path};
+use crate::core::yara_scanner::{file_contains_eicar_test_marker, is_eicar_candidate_path};
 use crate::core::DetectionPipeline;
 use crate::database::models::Verdict as DbVerdict;
 use crate::database::queries::DatabaseQueries;
@@ -1607,7 +1608,10 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                             return;
                                         }
 
-                                        if !is_scannable_file(&path_clone) {
+                                        if !is_scannable_file(&path_clone)
+                                            && !is_eicar_candidate_path(&path_clone)
+                                            && !file_contains_eicar_test_marker(&path_clone)
+                                        {
                                             log::debug!(
                                                 "Skipping non-scannable file type: {}",
                                                 path_clone

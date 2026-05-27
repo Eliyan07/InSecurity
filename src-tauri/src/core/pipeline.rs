@@ -103,6 +103,41 @@ pub struct EmulationSummary {
 pub struct DetectionPipeline;
 
 impl DetectionPipeline {
+    fn eicar_scan_result(file_path: &str, file_hash: String, scan_time_ms: u64) -> ScanResult {
+        ScanResult {
+            file_path: file_path.to_string(),
+            file_hash,
+            verdict: Verdict::Malware,
+            confidence: 0.99,
+            threat_level: "HIGH".to_string(),
+            threat_name: Some("EICAR Test File".to_string()),
+            scan_time_ms,
+            detailed_results: DetailedResults {
+                static_analysis: None,
+                ml_prediction: None,
+                reputation_score: None,
+                novelty_score: None,
+                behavior_analysis: None,
+                emulation_result: None,
+                signature_info: None,
+            },
+        }
+    }
+
+    async fn detect_eicar_hash(file_path: &str) -> Option<String> {
+        let fp = file_path.to_string();
+        tokio::task::spawn_blocking(move || {
+            if yara_scanner::file_contains_eicar_test_marker(&fp) {
+                Some(ingestion::compute_file_hash(&fp).unwrap_or_default())
+            } else {
+                None
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     fn cap_suspicious_confidence(
         verdict: &Verdict,
         confidence: f64,
@@ -235,6 +270,14 @@ impl DetectionPipeline {
             });
         }
 
+        if let Some(file_hash) = Self::detect_eicar_hash(file_path).await {
+            return Ok(Self::eicar_scan_result(
+                file_path,
+                file_hash,
+                start.elapsed().as_millis() as u64,
+            ));
+        }
+
         // Compute hash on a blocking thread to avoid starving the tokio runtime
         // File I/O is synchronous and would block the async executor otherwise
         let file_path_owned = file_path.to_string();
@@ -312,8 +355,7 @@ impl DetectionPipeline {
         // For unknown files in high-risk locations (Downloads, Desktop,
         // Temp, drive root, etc.), run the full detection pipeline. The file
         // already passed is_scannable_file() above, so it has a risky
-        // extension. This fulfills the docstring promise: "Only run full
-        // pipeline on unknown/suspicious files".
+        // extension.
         if crate::core::utils::is_high_risk_path(file_path) {
             log::info!(
                 "Quick scan: unknown file in high-risk path, running full pipeline: {}",
@@ -434,6 +476,14 @@ impl DetectionPipeline {
                     signature_info: None,
                 },
             });
+        }
+
+        if let Some(file_hash) = Self::detect_eicar_hash(file_path).await {
+            return Ok(Self::eicar_scan_result(
+                file_path,
+                file_hash,
+                start.elapsed().as_millis() as u64,
+            ));
         }
 
         // Stage 0.2: Skip non-executable file types (data files that can't contain malware)
@@ -889,7 +939,6 @@ impl DetectionPipeline {
 
         // Full scan path for higher-risk files
         // Run ML, reputation, novelty, and behavior analysis concurrently.
-        // ML uses ONNX Runtime (Rust-native), so it no longer shares the Python GIL.
         // All four tasks run truly in parallel.
 
         let file_content_for_ml = file_content.clone();
@@ -897,8 +946,8 @@ impl DetectionPipeline {
         // Clone the Arc so the spawn_blocking closure can own it.
         let onnx_clf = ONNX_CLASSIFIER.get().and_then(|opt| opt.clone());
         let ml_task = tokio::task::spawn_blocking(move || {
-            // Skip for large files: EMBER extraction over 20MB is slow and
-            // the ML signal on huge NSIS installers is low anyway.
+            // Skip for large files: EMBER extraction over 20MB
+            // is slow and a useless most of the time  :l
             if ml_file_size > 20 * 1024 * 1024 {
                 return None;
             }
@@ -977,7 +1026,6 @@ impl DetectionPipeline {
             &novelty,
         );
 
-        // Derive threat_name from available analysis data
         let threat_name = Self::derive_threat_name(
             &verdict,
             confidence,
@@ -1007,7 +1055,6 @@ impl DetectionPipeline {
         })
     }
 
-    /// Derive a human-readable threat name from available analysis data
     fn derive_threat_name(
         verdict: &Verdict,
         confidence: f64,
@@ -1016,18 +1063,18 @@ impl DetectionPipeline {
         ml_result: &Option<ml_bridge::MLPrediction>,
         reputation: &Option<reputation::ReputationScore>,
     ) -> Option<String> {
-        // Only derive threat names for threats, not clean files
         if *verdict == Verdict::Clean {
             return None;
+        }
+
+        if yara_scanner::has_eicar_test_match(&static_result.yara_matches) {
+            return Some("EICAR Test File".to_string());
         }
 
         let has_reputation_corroboration = reputation
             .as_ref()
             .is_some_and(|rep| rep.threat_count > 0 || !rep.suggested_names.is_empty());
 
-        // Suspicious detections should keep a generic headline unless they are both
-        // unsigned and corroborated by external reputation data. This prevents YARA-only
-        // family names from dominating the UI for likely false positives.
         if *verdict == Verdict::Suspicious
             && (confidence < 0.70 || signature_info.is_valid || !has_reputation_corroboration)
         {
@@ -1039,7 +1086,6 @@ impl DetectionPipeline {
             if !rep.suggested_names.is_empty() {
                 return Some(rep.suggested_names[0].clone());
             }
-            // If we have threat detections, construct a name from detection count
             if rep.threat_count > 0 {
                 let detection_rate = if !rep.detections.is_empty() {
                     format!("{}/{} engines", rep.threat_count, rep.detections.len())
@@ -1175,6 +1221,10 @@ impl DetectionPipeline {
         novelty: &Option<ml_bridge::NoveltyPrediction>,
     ) -> (Verdict, f64, String) {
         use crate::core::yara_scanner::RuleSeverity;
+
+        if yara_scanner::has_eicar_test_match(&static_result.yara_matches) {
+            return (Verdict::Malware, 0.99, "HIGH".to_string());
+        }
 
         // Defense-in-depth: handle blacklisted/whitelisted files even though
         // the scan pipeline also checks these before calling determine_verdict.
@@ -1992,6 +2042,67 @@ mod tests {
         );
 
         assert_eq!(threat_name, Some("CobaltStrike.Beacon".to_string()));
+    }
+
+    #[test]
+    fn test_verdict_eicar_high_rule_is_always_malware() {
+        let static_result = static_scanner::StaticAnalysisResult {
+            yara_matches: vec![YaraMatch {
+                rule_name: "EICAR_Test_File".to_string(),
+                severity: RuleSeverity::High,
+                description: "EICAR Anti-Virus Test File".to_string(),
+                category: "strict".to_string(),
+                offset: Some(0),
+            }],
+            entropy_score: 0.0,
+            is_whitelisted: false,
+            is_blacklisted: false,
+            suspicious_characteristics: vec![],
+        };
+        let signature = make_signature_info(false, false, None);
+
+        let (verdict, confidence, threat_level) = DetectionPipeline::determine_verdict(
+            "C:\\Users\\test\\eicar.com",
+            &signature,
+            &static_result,
+            &None,
+            &None,
+            &None,
+            &None,
+            &None,
+        );
+
+        assert_eq!(verdict, Verdict::Malware);
+        assert_eq!(threat_level, "HIGH");
+        assert!(confidence >= 0.99);
+    }
+
+    #[test]
+    fn test_derive_threat_name_uses_friendly_eicar_name() {
+        let static_result = static_scanner::StaticAnalysisResult {
+            yara_matches: vec![YaraMatch {
+                rule_name: "EICAR_Test_File".to_string(),
+                severity: RuleSeverity::High,
+                description: "EICAR Anti-Virus Test File".to_string(),
+                category: "strict".to_string(),
+                offset: Some(0),
+            }],
+            entropy_score: 0.0,
+            is_whitelisted: false,
+            is_blacklisted: false,
+            suspicious_characteristics: vec![],
+        };
+
+        let threat_name = DetectionPipeline::derive_threat_name(
+            &Verdict::Malware,
+            0.99,
+            &make_signature_info(false, false, None),
+            &static_result,
+            &None,
+            &None,
+        );
+
+        assert_eq!(threat_name, Some("EICAR Test File".to_string()));
     }
 
     #[test]

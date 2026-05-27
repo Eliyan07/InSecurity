@@ -491,6 +491,7 @@ fn collect_files(
     max_file_size: Option<u64>,
 ) -> Vec<String> {
     use crate::core::utils::is_scannable_file;
+    use crate::core::yara_scanner::{file_contains_eicar_test_marker, is_eicar_candidate_path};
 
     // Directories to always skip - they add thousands of files and never contain real malware
     let skip_dirs: &[&str] = &[
@@ -558,7 +559,17 @@ fn collect_files(
                     }
                 }
                 if let Some(path_str) = path.to_str() {
-                    if is_scannable_file(path_str) {
+                    let should_scan = if is_scannable_file(path_str) {
+                        true
+                    } else if is_eicar_candidate_path(path_str) {
+                        true
+                    } else if path == base_path.as_path() {
+                        file_contains_eicar_test_marker(path_str)
+                    } else {
+                        false
+                    };
+
+                    if should_scan {
                         files.push(path_str.to_string());
                     }
                 }
@@ -1077,6 +1088,7 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use tempfile::tempdir;
 
     /// Helper to reset all global state before each test.
     /// Since these tests share statics, run them serially (`cargo test -- --test-threads=1`)
@@ -1333,5 +1345,37 @@ mod tests {
         let deser: SingleFileScanResult = serde_json::from_str(&json).unwrap();
         assert_eq!(deser.confidence, 0.95);
         assert_eq!(deser.scan_time_ms, 42);
+    }
+
+    #[test]
+    fn test_collect_files_includes_standard_eicar_filename() {
+        let dir = tempdir().unwrap();
+        let eicar_path = dir.path().join("eicar.com.txt");
+        std::fs::write(
+            &eicar_path,
+            b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+        )
+        .unwrap();
+
+        let collected = collect_files(&[dir.path().to_path_buf()], None, None);
+
+        assert!(collected
+            .iter()
+            .any(|path| path == &eicar_path.to_string_lossy()));
+    }
+
+    #[test]
+    fn test_collect_files_includes_single_custom_eicar_file_even_without_eicar_name() {
+        let dir = tempdir().unwrap();
+        let eicar_path = dir.path().join("sample.txt");
+        std::fs::write(
+            &eicar_path,
+            b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+        )
+        .unwrap();
+
+        let collected = collect_files(&[eicar_path.clone()], None, None);
+
+        assert_eq!(collected, vec![eicar_path.to_string_lossy().to_string()]);
     }
 }

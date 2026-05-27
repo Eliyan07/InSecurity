@@ -4,6 +4,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use yara_x::{Compiler, MetaValue, Rule, Rules, Scanner, SourceCode};
 
@@ -24,6 +25,12 @@ pub enum RuleSeverity {
     Low,
     Info,
 }
+
+const EICAR_RULE_NAME: &str = "EICAR_Test_File";
+const EICAR_TEST_MARKER: &[u8] =
+    b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+const EICAR_ARCHIVE_MARKERS: [&[u8]; 3] = [b"eicar.com", b"eicar_com.zip", b"eicarcom2.zip"];
+const EICAR_PROBE_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Clone)]
 struct RuleSource {
@@ -404,6 +411,70 @@ pub fn scan_with_yara(content: &[u8]) -> Vec<YaraMatch> {
     YARA_SCANNER.scan(content)
 }
 
+pub fn contains_eicar_test_marker(content: &[u8]) -> bool {
+    content
+        .windows(EICAR_TEST_MARKER.len())
+        .any(|window| window == EICAR_TEST_MARKER)
+}
+
+fn contains_eicar_archive_marker(content: &[u8]) -> bool {
+    let lowercased: Vec<u8> = content
+        .iter()
+        .map(|byte| byte.to_ascii_lowercase())
+        .collect();
+    EICAR_ARCHIVE_MARKERS.iter().any(|marker| {
+        lowercased
+            .windows(marker.len())
+            .any(|window| window == *marker)
+    })
+}
+
+pub fn file_contains_eicar_test_marker(file_path: &str) -> bool {
+    let Ok(mut file) = fs::File::open(file_path) else {
+        return false;
+    };
+
+    let mut buffer = vec![0u8; EICAR_PROBE_BYTES];
+    let Ok(bytes_read) = file.read(&mut buffer) else {
+        return false;
+    };
+
+    let probed = &buffer[..bytes_read];
+    if contains_eicar_test_marker(probed) {
+        return true;
+    }
+
+    let archive_ext = Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    if is_eicar_candidate_path(file_path)
+        && matches!(
+            archive_ext.as_deref(),
+            Some("zip" | "cab" | "7z" | "rar" | "iso" | "img")
+        )
+    {
+        return contains_eicar_archive_marker(probed);
+    }
+
+    false
+}
+
+pub fn is_eicar_candidate_path(file_path: &str) -> bool {
+    Path::new(file_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_ascii_lowercase().contains("eicar"))
+        .unwrap_or(false)
+}
+
+pub fn has_eicar_test_match(matches: &[YaraMatch]) -> bool {
+    matches
+        .iter()
+        .any(|matched| matched.rule_name.eq_ignore_ascii_case(EICAR_RULE_NAME))
+}
+
 pub fn get_rule_count() -> usize {
     YARA_SCANNER.rule_sources.len()
 }
@@ -618,5 +689,60 @@ mod tests {
     fn test_get_rules_by_severity_filters_bundled_rules() {
         let critical_rules = get_rules_by_severity(RuleSeverity::Critical);
         assert!(critical_rules.iter().all(|rule_name| !rule_name.is_empty()));
+    }
+
+    #[test]
+    fn test_contains_eicar_test_marker_detects_embedded_string() {
+        let prefixed =
+            b"prefix:X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+        assert!(contains_eicar_test_marker(prefixed));
+    }
+
+    #[test]
+    fn test_is_eicar_candidate_path_matches_standard_filenames() {
+        assert!(is_eicar_candidate_path(
+            "C:\\Users\\test\\Desktop\\eicar.com.txt"
+        ));
+        assert!(is_eicar_candidate_path(
+            "C:\\Users\\test\\Downloads\\EICAR_COM.ZIP"
+        ));
+        assert!(!is_eicar_candidate_path(
+            "C:\\Users\\test\\Desktop\\notes.txt"
+        ));
+    }
+
+    #[test]
+    fn test_file_contains_eicar_test_marker_reads_from_disk() {
+        let dir = std::env::temp_dir().join("insecurity_test_eicar_probe");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("sample.txt");
+        std::fs::write(
+            &path,
+            b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*\r\n",
+        )
+        .unwrap();
+
+        assert!(file_contains_eicar_test_marker(path.to_str().unwrap()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_has_eicar_test_match_checks_rule_name() {
+        let matches = vec![YaraMatch {
+            rule_name: "EICAR_Test_File".to_string(),
+            severity: RuleSeverity::High,
+            description: "EICAR Anti-Virus Test File".to_string(),
+            category: "strict".to_string(),
+            offset: Some(0),
+        }];
+
+        assert!(has_eicar_test_match(&matches));
+    }
+
+    #[test]
+    fn test_contains_eicar_archive_marker_detects_standard_archive_names() {
+        let fake_zip = b"PK\x03\x04random bytes eicar.com more bytes";
+        assert!(contains_eicar_archive_marker(fake_zip));
     }
 }
