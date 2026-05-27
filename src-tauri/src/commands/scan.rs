@@ -991,10 +991,94 @@ pub struct SystemInfo {
     pub app_version: String,
 }
 
+fn verdict_to_threat_detail(verdict: &crate::database::models::Verdict) -> ThreatDetail {
+    use chrono::{DateTime, Utc};
+
+    let detected_at = DateTime::<Utc>::from_timestamp(verdict.scanned_at, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    let mut reasons = Vec::new();
+    if verdict.confidence > 0.8 {
+        reasons.push("High ML confidence score".to_string());
+    }
+    if verdict.threat_level == "HIGH" {
+        reasons.push("Critical threat indicators detected".to_string());
+    }
+
+    ThreatDetail {
+        file_path: verdict.file_path.clone(),
+        file_hash: verdict.file_hash.clone(),
+        verdict: verdict.verdict.clone(),
+        threat_level: verdict.threat_level.clone(),
+        threat_name: verdict.threat_name.clone(),
+        confidence: verdict.confidence,
+        detected_at,
+        detection_reasons: reasons,
+    }
+}
+
+/// Return threat details recorded during the most recent manual scan.
+/// The result is scoped to the current scan window using `SCAN_START_TIME`,
+/// so the frontend can reliably hydrate the completed scan view even if
+/// some live `scan-result` events were missed.
+#[tauri::command]
+pub async fn get_last_manual_scan_threats(limit: Option<u32>) -> Result<Vec<ThreatDetail>, String> {
+    let scan_start_ms = SCAN_START_TIME.load(Ordering::SeqCst);
+    if scan_start_ms == 0 {
+        return Ok(Vec::new());
+    }
+
+    let scan_start_seconds = (scan_start_ms / 1000) as i64;
+    let max_items = limit.unwrap_or(500).clamp(1, 5_000);
+
+    Ok(crate::with_db_async(move |conn| {
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, source
+                   FROM verdicts
+                   WHERE source = 'manual'
+                     AND verdict != 'Clean'
+                     AND scanned_at >= ?1
+                   ORDER BY scanned_at DESC, id DESC
+                   LIMIT ?2"#,
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map(rusqlite::params![scan_start_seconds, max_items as i64], |row| {
+                Ok(crate::database::models::Verdict {
+                    id: row.get(0)?,
+                    file_hash: row.get(1)?,
+                    file_path: row.get(2)?,
+                    verdict: row.get(3)?,
+                    confidence: row.get(4)?,
+                    threat_level: row.get(5)?,
+                    threat_name: row.get(6)?,
+                    scan_time_ms: row.get(7)?,
+                    scanned_at: row.get(8)?,
+                    source: row.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        let verdicts = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok(verdicts
+            .iter()
+            .map(verdict_to_threat_detail)
+            .collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|e| e.to_string())?)
+}
+
 /// Export scan report as JSON
 #[tauri::command]
 pub async fn export_scan_report(output_path: String) -> Result<String, String> {
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
 
     let scan_type = CURRENT_SCAN_TYPE
         .read()
@@ -1022,30 +1106,7 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
             Ok(rows) => Ok(rows
                 .iter()
                 .filter(|r| r.verdict != "Clean")
-                .map(|r| {
-                    let detected_at = DateTime::<Utc>::from_timestamp(r.scanned_at, 0)
-                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-                        .unwrap_or_else(|| "Unknown".to_string());
-
-                    let mut reasons = Vec::new();
-                    if r.confidence > 0.8 {
-                        reasons.push("High ML confidence score".to_string());
-                    }
-                    if r.threat_level == "HIGH" {
-                        reasons.push("Critical threat indicators detected".to_string());
-                    }
-
-                    ThreatDetail {
-                        file_path: r.file_path.clone(),
-                        file_hash: r.file_hash.clone(),
-                        verdict: r.verdict.clone(),
-                        threat_level: r.threat_level.clone(),
-                        threat_name: r.threat_name.clone(),
-                        confidence: r.confidence,
-                        detected_at,
-                        detection_reasons: reasons,
-                    }
-                })
+                .map(verdict_to_threat_detail)
                 .collect()),
             Err(_) => Ok(Vec::new()),
         }

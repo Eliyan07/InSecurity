@@ -133,6 +133,17 @@ export interface ScanSummary {
   scanType: string;
 }
 
+export interface ManualScanThreat {
+  filePath: string;
+  fileHash: string;
+  verdict: string;
+  threatLevel: string;
+  threatName: string | null;
+  confidence: number;
+  detectedAt: string;
+  detectionReasons: string[];
+}
+
 /**
  * Start a scan (quick, full, or custom)
  */
@@ -162,6 +173,10 @@ export async function getScanStatus(): Promise<ScanStatus> {
  */
 export async function forceResetScan(): Promise<void> {
   return safeInvoke<void>('force_reset_scan');
+}
+
+export async function getLastManualScanThreats(limit?: number): Promise<ManualScanThreat[]> {
+  return safeInvoke<ManualScanThreat[]>('get_last_manual_scan_threats', { limit: limit ?? null });
 }
 
 /**

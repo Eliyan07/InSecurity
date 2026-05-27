@@ -21,6 +21,7 @@ vi.mock('../../services/api', () => ({
   forceResetScan: vi.fn().mockResolvedValue(undefined),
   safeInvoke: vi.fn().mockResolvedValue({}),
   safeListen: vi.fn().mockResolvedValue(() => {}),
+  getLastManualScanThreats: vi.fn().mockResolvedValue([]),
   ignoreThreat: vi.fn().mockResolvedValue(undefined),
   pickScanFolder: vi.fn().mockResolvedValue(null),
   pickScanFile: vi.fn().mockResolvedValue(null),
@@ -260,5 +261,80 @@ describe('Scanner', () => {
     expect(screen.getByText('D:\\other\\dup.exe')).toBeInTheDocument();
     expect(screen.getByText('Whitelisted')).toBeInTheDocument();
     expect(screen.getAllByText('Trust & Whitelist').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it.each(['custom', 'full'] as const)('hydrates malware details after %s scan completion', async (scanType) => {
+    const listeners: Record<string, (event: { payload: any }) => void> = {};
+    const scanningStatus: ScanStatus = {
+      ...baseStatus,
+      isScanning: true,
+      filesScanned: 1,
+      progressPercent: 100,
+      malwareCount: 1,
+      elapsedSeconds: 1,
+      totalFiles: 1,
+      scanType,
+    };
+    let currentStatus: ScanStatus = baseStatus;
+
+    vi.mocked(api.getScanStatus).mockImplementation(async () => currentStatus);
+    vi.mocked(api.startScan).mockImplementation(async () => {
+      currentStatus = scanningStatus;
+    });
+    vi.mocked(api.getLastManualScanThreats).mockResolvedValue([
+      {
+        filePath: scanType === 'custom' ? 'C:\\samples\\eicar.com.txt' : 'C:\\Users\\test\\Downloads\\payload.exe',
+        fileHash: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        verdict: 'Malware',
+        threatLevel: 'HIGH',
+        threatName: 'EICAR Test File',
+        confidence: 0.99,
+        detectedAt: '2026-05-27 12:00:00 UTC',
+        detectionReasons: [],
+      },
+    ]);
+    vi.mocked(api.safeListen).mockImplementation(async (eventName: string, callback: any) => {
+      listeners[eventName] = callback;
+      return () => {
+        delete listeners[eventName];
+      };
+    });
+
+    render(<Scanner autoQuarantine={false} />);
+
+    await waitFor(() => expect(api.safeListen).toHaveBeenCalledTimes(2));
+
+    if (scanType === 'custom') {
+      const customInput = screen.getByPlaceholderText('C:\\path\\to\\folder\\or\\file');
+      fireEvent.change(customInput, { target: { value: 'C:\\samples\\eicar.com.txt' } });
+      fireEvent.click(within(customInput.closest('.custom-path-input') as HTMLElement).getByText(/^scan$/i));
+    } else {
+      fireEvent.click(screen.getAllByText(/full scan/i)[0]);
+    }
+
+    await waitFor(() => expect(api.startScan).toHaveBeenCalled());
+
+    currentStatus = {
+      ...scanningStatus,
+      isScanning: false,
+    };
+
+    await act(async () => {
+      listeners['scan-complete']({
+        payload: {
+          totalFiles: 1,
+          cleanCount: 0,
+          suspiciousCount: 0,
+          malwareCount: 1,
+          elapsedSeconds: 1,
+          scanType,
+        },
+      });
+    });
+
+    await waitFor(() => expect(api.getLastManualScanThreats).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('EICAR Test File')).toBeInTheDocument());
+    expect(screen.getByText(scanType === 'custom' ? 'eicar.com.txt' : 'payload.exe')).toBeInTheDocument();
+    expect(screen.getByText(/threats found \(1\)/i)).toBeInTheDocument();
   });
 });

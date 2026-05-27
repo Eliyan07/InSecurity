@@ -10,12 +10,14 @@ import {
   pickScanFolder,
   pickScanFile,
   getScheduledScans,
+  getLastManualScanThreats,
   createScheduledScan,
   toggleScheduledScan,
   deleteScheduledScan,
   runScheduledScanNow,
   type ScheduledScan,
   type CreateScheduledScan,
+  type ManualScanThreat,
 } from '../../services/api';
 import type { ScanStatus, ScanSummary } from '../../services/api';
 import type { ScanResult } from '../../types/scan';
@@ -66,6 +68,17 @@ const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
     filePath,
   };
 };
+
+const mapManualThreatToResult = (threat: ManualScanThreat): ScanResult => ({
+  threatId: threat.filePath,
+  fileHash: threat.fileHash,
+  verdict: parseVerdict(threat.verdict),
+  confidence: threat.confidence,
+  threatLevel: (threat.threatLevel as 'HIGH' | 'MEDIUM' | 'LOW') ?? 'LOW',
+  threatName: threat.threatName ?? undefined,
+  scanTimeMs: 0,
+  filePath: threat.filePath,
+});
 
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -132,6 +145,44 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
         [threatIdentity]: resolution,
       };
     });
+  }, []);
+
+  const hydrateThreatsForCompletedScan = useCallback(async (summary: Pick<ScanSummary, 'suspiciousCount' | 'malwareCount'>) => {
+    const expectedThreats = Math.min(MAX_SCAN_THREATS, summary.suspiciousCount + summary.malwareCount);
+    if (expectedThreats <= 0) return;
+
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const threats = await getLastManualScanThreats(expectedThreats);
+        const mapped = threats
+          .map(mapManualThreatToResult)
+          .filter(threat => threat.fileHash && threat.filePath && isThreat(threat.verdict));
+
+        if (mapped.length > 0) {
+          setScanThreats(prev => {
+            const existingThreats = new Set(prev.map(getThreatIdentity));
+            const merged = [...prev];
+            for (const threat of mapped) {
+              const threatIdentity = getThreatIdentity(threat);
+              if (existingThreats.has(threatIdentity)) continue;
+              existingThreats.add(threatIdentity);
+              merged.push(threat);
+            }
+            if (merged.length > MAX_SCAN_THREATS) merged.length = MAX_SCAN_THREATS;
+            return merged;
+          });
+        }
+
+        if (mapped.length >= expectedThreats) {
+          return;
+        }
+      } catch (e) {
+        console.error('[Scanner] Failed to hydrate completed scan threats:', e);
+        return;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
   }, []);
 
   // Flush buffered scan results into state (batched to reduce re-renders)
@@ -267,6 +318,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
             };
             setScanSummary(syntheticSummary);
             setScanStatus({ ...status, isScanning: false });
+            void hydrateThreatsForCompletedScan(syntheticSummary);
             setForceCompleted(true);  // Prevent further polling
             if (interval) {
               clearInterval(interval);
@@ -300,7 +352,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
       isMounted = false;
       if (interval) clearInterval(interval);
     };
-  }, [scanStatus?.isScanning, forceCompleted]);
+  }, [scanStatus?.isScanning, forceCompleted, hydrateThreatsForCompletedScan]);
 
   // Listen for scan completion
   useEffect(() => {
@@ -317,6 +369,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
             return;
           }
           setScanSummary(event.payload);
+          void hydrateThreatsForCompletedScan(event.payload);
           // Force refresh status to update isScanning state
           getScanStatus()
             .then(status => {
@@ -345,7 +398,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
       isMounted = false;
       unlisten?.();
     };
-  }, [forceCompleted]);
+  }, [forceCompleted, hydrateThreatsForCompletedScan]);
 
   // Load scheduled scans
   useEffect(() => {

@@ -728,6 +728,7 @@ pub fn run() {
             commands::scan::force_reset_scan,
             commands::scan::pick_scan_folder,
             commands::scan::pick_scan_file,
+            commands::scan::get_last_manual_scan_threats,
             commands::scan::export_scan_report,
             commands::database::get_verdicts,
             commands::database::get_active_threats,
