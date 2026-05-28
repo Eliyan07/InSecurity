@@ -746,4 +746,15 @@ mod tests {
         assert!(contains_eicar_archive_marker(fake_zip));
     }
 
+    #[test]
+    fn test_bundled_zeus_archive_rule_matches_payload_name() {
+        let archive_bytes = b"PK\x03\x04headerinvoice_2318362983713_823931342io.pdf.exetrailer";
+        let matches = scan_with_yara(archive_bytes);
+
+        assert!(matches.iter().any(|matched| {
+            matched
+                .rule_name
+                .eq_ignore_ascii_case("Archive_ZeusBanking_Zip_Lure")
+        }));
+    }
 }

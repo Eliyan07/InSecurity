@@ -431,7 +431,6 @@ fn get_quick_scan_paths() -> Vec<std::path::PathBuf> {
         paths.push(public_desktop);
     }
 
-
     paths
 }
 
@@ -473,8 +472,6 @@ fn get_full_scan_paths() -> Vec<std::path::PathBuf> {
     if public.exists() {
         paths.push(public);
     }
-
-   
 
     paths
 }
@@ -765,16 +762,9 @@ pub async fn start_scan(
                             if is_quick_scan {
                                 DetectionPipeline::scan_file_quick(&file_path).await
                             } else {
-                                // Force a fresh analysis for high-risk locations such as
-                                // Desktop/Downloads so old clean cache entries do not hide
-                                // newly improved detections during manual rescans.
-                                let bypass_cache =
-                                    crate::core::utils::is_high_risk_path(&file_path);
-                                DetectionPipeline::scan_file_with_options(
-                                    &file_path,
-                                    bypass_cache,
-                                )
-                                .await
+                                // Manual rescans should always re-evaluate the file so newly
+                                // added signatures are not hidden by an old cached clean verdict.
+                                DetectionPipeline::scan_file_with_options(&file_path, true).await
                             }
                         })
                         .await;
@@ -1087,12 +1077,7 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
         .read()
         .ok()
         .and_then(|t| t.clone())
-        .or_else(|| {
-            LAST_COMPLETED_SCAN_TYPE
-                .read()
-                .ok()
-                .and_then(|t| t.clone())
-        })
+        .or_else(|| LAST_COMPLETED_SCAN_TYPE.read().ok().and_then(|t| t.clone()))
         .unwrap_or_else(|| "unknown".to_string());
 
     let elapsed = {
