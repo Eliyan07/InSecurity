@@ -103,13 +103,11 @@ static SCAN_START_TIME: AtomicU64 = AtomicU64::new(0);
 
 static LAST_THREAT: RwLock<Option<ThreatInfo>> = RwLock::new(None);
 
-/// Track the current scan type
 static CURRENT_SCAN_TYPE: RwLock<Option<String>> = RwLock::new(None);
+static LAST_COMPLETED_SCAN_TYPE: RwLock<Option<String>> = RwLock::new(None);
 
-/// Track whether this is a manual scan (vs real-time)
 static IS_MANUAL_SCAN: AtomicBool = AtomicBool::new(false);
 
-/// Generation counter - incremented on each new scan to detect stale tasks
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// Signal real-time protection to pause during manual scans
@@ -184,6 +182,9 @@ pub fn scan_stopped() {
         *file = None;
     }
     if let Ok(mut scan_type) = CURRENT_SCAN_TYPE.write() {
+        if let Ok(mut last_type) = LAST_COMPLETED_SCAN_TYPE.write() {
+            *last_type = scan_type.clone();
+        }
         *scan_type = None;
     }
 }
@@ -430,8 +431,6 @@ fn get_quick_scan_paths() -> Vec<std::path::PathBuf> {
         paths.push(public_desktop);
     }
 
-    // NOTE: Skipping TEMP folder - it often contains symlinks/junctions that lead to
-    // Program Files, BuildTools, etc. which inflates scan count and slows down quick scan
 
     paths
 }
@@ -475,15 +474,12 @@ fn get_full_scan_paths() -> Vec<std::path::PathBuf> {
         paths.push(public);
     }
 
-    // NOTE: We intentionally skip C:\Windows to avoid scanning system files
-    // which are protected by Windows and rarely contain user-installed malware
-    // Enterprise AVs do scan Windows folder but it adds significant time
+   
 
     paths
 }
 
 /// Collect scannable files from paths
-/// `max_file_size` - if set, files larger than this (bytes) are skipped.
 /// Quick scan uses this to avoid hashing large ISOs/installers that dominate scan time.
 fn collect_files(
     paths: &[std::path::PathBuf],
@@ -769,9 +765,16 @@ pub async fn start_scan(
                             if is_quick_scan {
                                 DetectionPipeline::scan_file_quick(&file_path).await
                             } else {
-                                // Cache enabled for full scans - unchanged files get
-                                // instant cache hits on repeat scans (24h TTL)
-                                DetectionPipeline::scan_file_with_options(&file_path, false).await
+                                // Force a fresh analysis for high-risk locations such as
+                                // Desktop/Downloads so old clean cache entries do not hide
+                                // newly improved detections during manual rescans.
+                                let bypass_cache =
+                                    crate::core::utils::is_high_risk_path(&file_path);
+                                DetectionPipeline::scan_file_with_options(
+                                    &file_path,
+                                    bypass_cache,
+                                )
+                                .await
                             }
                         })
                         .await;
@@ -1084,6 +1087,12 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
         .read()
         .ok()
         .and_then(|t| t.clone())
+        .or_else(|| {
+            LAST_COMPLETED_SCAN_TYPE
+                .read()
+                .ok()
+                .and_then(|t| t.clone())
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
     let elapsed = {
@@ -1099,17 +1108,47 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
         }
     };
 
-    // Get threats from database on a blocking thread
-    let threats: Vec<ThreatDetail> = crate::with_db_async(|conn| {
-        use crate::database::queries::DatabaseQueries;
-        match DatabaseQueries::get_recent_verdicts(conn, 1000) {
-            Ok(rows) => Ok(rows
-                .iter()
-                .filter(|r| r.verdict != "Clean")
-                .map(verdict_to_threat_detail)
-                .collect()),
-            Err(_) => Ok(Vec::new()),
-        }
+    let scan_start_seconds = (SCAN_START_TIME.load(Ordering::SeqCst) / 1000) as i64;
+
+    // Export only threats from the current/most recent manual scan window.
+    let threats: Vec<ThreatDetail> = crate::with_db_async(move |conn| {
+        let mut stmt = conn
+            .prepare(
+                r#"SELECT id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, source
+                   FROM verdicts
+                   WHERE source = 'manual'
+                     AND LOWER(verdict) IN ('malware', 'suspicious', 'pup')
+                     AND scanned_at >= ?1
+                   ORDER BY scanned_at DESC, id DESC
+                   LIMIT 1000"#,
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([scan_start_seconds], |row| {
+                Ok(crate::database::models::Verdict {
+                    id: row.get(0)?,
+                    file_hash: row.get(1)?,
+                    file_path: row.get(2)?,
+                    verdict: row.get(3)?,
+                    confidence: row.get(4)?,
+                    threat_level: row.get(5)?,
+                    threat_name: row.get(6)?,
+                    scan_time_ms: row.get(7)?,
+                    scanned_at: row.get(8)?,
+                    source: row.get(9)?,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+
+        let verdicts = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        Ok(verdicts
+            .iter()
+            .map(verdict_to_threat_detail)
+            .collect::<Vec<_>>())
     })
     .await
     .unwrap_or_default();
@@ -1172,6 +1211,9 @@ mod tests {
             *t = None;
         }
         if let Ok(mut s) = CURRENT_SCAN_TYPE.write() {
+            *s = None;
+        }
+        if let Ok(mut s) = LAST_COMPLETED_SCAN_TYPE.write() {
             *s = None;
         }
     }

@@ -15,7 +15,9 @@ use tauri::Emitter;
 use crate::cache::cache_manager::CacheConfig;
 use crate::commands::scan::set_current_file;
 use crate::core::pipeline::ScanResult;
-use crate::core::utils::{is_dev_build_artifact_path, is_scannable_file, is_system_path};
+use crate::core::utils::{
+    is_dev_build_artifact_path, is_high_risk_path, is_scannable_file, is_system_path,
+};
 use crate::core::yara_scanner::{file_contains_eicar_test_marker, is_eicar_candidate_path};
 use crate::core::DetectionPipeline;
 use crate::database::models::Verdict as DbVerdict;
@@ -1654,7 +1656,17 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         set_current_file(&path_clone);
                                         log::info!("Starting scan for: {}", path_clone);
 
-                                        match DetectionPipeline::scan_file(&path_clone).await {
+                                        let scan_result = if is_high_risk_path(&path_clone) {
+                                            DetectionPipeline::scan_file_with_options(
+                                                &path_clone,
+                                                true,
+                                            )
+                                            .await
+                                        } else {
+                                            DetectionPipeline::scan_file(&path_clone).await
+                                        };
+
+                                        match scan_result {
                                             Ok(result) => {
                                                 log::info!("Scan completed for {} - verdict: {:?}, confidence: {}", 
                                                     path_clone, result.verdict, result.confidence);
@@ -1819,7 +1831,13 @@ pub fn start_process_monitor(app: AppHandle) -> Result<(), String> {
 
                     set_current_file(&path_clone);
 
-                    match DetectionPipeline::scan_file(&path_clone).await {
+                    let scan_result = if is_high_risk_path(&path_clone) {
+                        DetectionPipeline::scan_file_with_options(&path_clone, true).await
+                    } else {
+                        DetectionPipeline::scan_file(&path_clone).await
+                    };
+
+                    match scan_result {
                         Ok(result) => {
                             handle_realtime_scan_result(
                                 result,

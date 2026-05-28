@@ -745,4 +745,5 @@ mod tests {
         let fake_zip = b"PK\x03\x04random bytes eicar.com more bytes";
         assert!(contains_eicar_archive_marker(fake_zip));
     }
+
 }
