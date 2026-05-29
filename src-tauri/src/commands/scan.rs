@@ -1,8 +1,3 @@
-// ============================================================================
-// Single File Scan (for System Posture "Scan this binary" button)
-// ============================================================================
-
-/// Result of scanning a single file, returned to the frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SingleFileScanResult {
@@ -15,14 +10,6 @@ pub struct SingleFileScanResult {
     pub scan_time_ms: u64,
 }
 
-/// Scan a single file through the full detection pipeline.
-/// Used by System Posture's "Scan this binary" button.
-///
-/// This does NOT use the manual scan machinery (IS_SCANNING, counters, etc.)
-/// because it's a quick one-off analysis, not a folder scan. It runs the file
-/// through the full pipeline (with cache bypass) and returns the result directly.
-///
-/// The verdict is persisted to the DB so System Posture shows it on next refresh.
 #[tauri::command]
 pub async fn scan_single_file(file_path: String) -> Result<SingleFileScanResult, String> {
     use crate::core::pipeline::DetectionPipeline;
@@ -37,14 +24,12 @@ pub async fn scan_single_file(file_path: String) -> Result<SingleFileScanResult,
         return Err(format!("Not a file: {}", file_path));
     }
 
-    // Run through the full detection pipeline (bypass_cache = true for fresh analysis)
     let result = DetectionPipeline::scan_file_with_options(&file_path, true)
         .await
         .map_err(|e| format!("Scan failed: {}", e))?;
 
     let verdict_str = format!("{:?}", result.verdict);
 
-    // Persist to DB so System Posture picks up the verdict on next refresh
     let rec = crate::database::models::Verdict {
         id: 0,
         file_hash: result.file_hash.clone(),
@@ -78,7 +63,6 @@ pub async fn scan_single_file(file_path: String) -> Result<SingleFileScanResult,
 }
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
-/// Scan commands exposed to frontend
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::RwLock;
@@ -110,11 +94,8 @@ static IS_MANUAL_SCAN: AtomicBool = AtomicBool::new(false);
 
 static SCAN_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Signal real-time protection to pause during manual scans
-/// Real-time threads should check this and skip low-priority scans
 pub static REALTIME_PAUSED: AtomicBool = AtomicBool::new(false);
 
-/// Check if real-time protection should pause for manual scan
 pub fn is_realtime_paused() -> bool {
     REALTIME_PAUSED.load(Ordering::SeqCst)
 }
@@ -128,26 +109,18 @@ pub struct ThreatInfo {
 }
 
 pub fn scan_started() {
-    // IMPORTANT: Set REALTIME_PAUSED first to ensure process monitor and file watcher
-    // pause before we mark the scan as started. This prevents a race condition where
-    // real-time scans could interfere with the manual scan's state initialization.
     REALTIME_PAUSED.store(true, Ordering::SeqCst);
     IS_MANUAL_SCAN.store(true, Ordering::SeqCst);
     IS_SCANNING.store(true, Ordering::SeqCst);
     log::info!(
         "Manual scan started - pausing real-time protection (file watching + process monitor)"
     );
-    // Initialize counters and state
     scan_started_internal();
 }
 
-/// Internal scan state initialization (for counters/state only)
-/// Called when IS_SCANNING is already set (e.g., via compare_exchange)
 fn scan_started_internal() {
-    // Set pause/manual flags (idempotent if already set)
     REALTIME_PAUSED.store(true, Ordering::SeqCst);
     IS_MANUAL_SCAN.store(true, Ordering::SeqCst);
-    // Bump generation so any previous scan task knows it's stale
     SCAN_GENERATION.fetch_add(1, Ordering::SeqCst);
     FILES_SCANNED.store(0, Ordering::SeqCst);
     FILES_REMAINING.store(0, Ordering::SeqCst);
@@ -171,11 +144,8 @@ fn scan_started_internal() {
 }
 
 pub fn scan_stopped() {
-    // Clear scanning state first, then resume real-time protection last
-    // This ensures real-time doesn't see stale manual scan state
     IS_SCANNING.store(false, Ordering::SeqCst);
     IS_MANUAL_SCAN.store(false, Ordering::SeqCst);
-    // Resume real-time protection (file watching + process monitor) after manual scan completes
     REALTIME_PAUSED.store(false, Ordering::SeqCst);
     log::info!("Manual scan stopped - resuming real-time protection");
     if let Ok(mut file) = CURRENT_FILE.write() {
@@ -201,9 +171,7 @@ pub fn reset_counters() {
     }
 }
 
-/// Set the current file being scanned (only during manual scans)
 pub fn set_current_file(path: &str) {
-    // Only update during manual scan to avoid real-time scans overwriting current file
     if !IS_MANUAL_SCAN.load(Ordering::SeqCst) {
         return;
     }
@@ -213,9 +181,7 @@ pub fn set_current_file(path: &str) {
     }
 }
 
-/// Increment scanned file count (only during manual scans)
 pub fn increment_scanned() {
-    // Only update during manual scan to avoid real-time scans affecting counts
     if !IS_MANUAL_SCAN.load(Ordering::SeqCst) {
         return;
     }
@@ -232,9 +198,7 @@ pub fn increment_scanned() {
     }
 }
 
-/// Record a scan result verdict for statistics (only during manual scans)
 pub fn record_verdict(verdict: &str, file_path: &str, threat_name: Option<&str>) {
-    // Only update manual scan counters during a manual scan
     if !IS_MANUAL_SCAN.load(Ordering::SeqCst) {
         return;
     }
@@ -290,7 +254,6 @@ pub fn get_scan_status() -> Result<ScanStatus, String> {
     let files_remaining = FILES_REMAINING.load(Ordering::SeqCst);
     let total_files = TOTAL_FILES.load(Ordering::SeqCst);
 
-    // Cap progress at 100% - files_scanned can sometimes exceed total if files are added dynamically
     let progress_percent = if total_files > 0 {
         ((files_scanned as f64 / total_files as f64) * 100.0).min(100.0)
     } else if IS_SCANNING.load(Ordering::SeqCst) {
@@ -356,10 +319,6 @@ pub struct ScanStatus {
     pub files_per_second: f64,
 }
 
-// ============================================================================
-// Scan Types and Commands
-// ============================================================================
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ScanType {
@@ -386,20 +345,14 @@ pub struct ScanSummary {
     pub scan_type: String,
 }
 
-/// Get paths for quick scan (common malware locations)
-/// Designed to complete in 1-3 minutes by focusing on high-risk, low-volume locations
-/// Unlike full scans, this avoids large cache folders and deep directories
 fn get_quick_scan_paths() -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
 
     if let Some(home) = dirs::home_dir() {
-        // Downloads folder - #1 malware entry point
         paths.push(home.join("Downloads"));
-        // Desktop - common drop location
         paths.push(home.join("Desktop"));
     }
 
-    // User Startup folder - common persistence mechanism (small folder)
     if let Some(home) = dirs::home_dir() {
         let startup = home
             .join("AppData")
@@ -414,14 +367,12 @@ fn get_quick_scan_paths() -> Vec<std::path::PathBuf> {
         }
     }
 
-    // Common Startup folder (all users) - usually just a few files
     let common_startup =
         std::path::PathBuf::from(r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup");
     if common_startup.exists() {
         paths.push(common_startup);
     }
 
-    // Public folders (shared access, common malware drop location)
     let public_downloads = std::path::PathBuf::from(r"C:\Users\Public\Downloads");
     let public_desktop = std::path::PathBuf::from(r"C:\Users\Public\Desktop");
     if public_downloads.exists() {
@@ -434,18 +385,13 @@ fn get_quick_scan_paths() -> Vec<std::path::PathBuf> {
     paths
 }
 
-/// Get paths for full scan - comprehensive system scan
-/// Includes user profile, program files, and key system locations
-/// This is thorough but takes 15-60+ minutes
 fn get_full_scan_paths() -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
 
-    // User profile - all user data
     if let Some(home) = dirs::home_dir() {
         paths.push(home);
     }
 
-    // Program Files - installed applications
     if let Ok(pf) = std::env::var("ProgramFiles") {
         let pf_path = std::path::PathBuf::from(&pf);
         if pf_path.exists() {
@@ -453,7 +399,6 @@ fn get_full_scan_paths() -> Vec<std::path::PathBuf> {
         }
     }
 
-    // Program Files (x86) - 32-bit applications on 64-bit Windows
     if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
         let pf86_path = std::path::PathBuf::from(&pf86);
         if pf86_path.exists() {
@@ -461,13 +406,11 @@ fn get_full_scan_paths() -> Vec<std::path::PathBuf> {
         }
     }
 
-    // ProgramData - application data
     let program_data = std::path::PathBuf::from(r"C:\ProgramData");
     if program_data.exists() {
         paths.push(program_data);
     }
 
-    // Public user folder
     let public = std::path::PathBuf::from(r"C:\Users\Public");
     if public.exists() {
         paths.push(public);
@@ -476,8 +419,6 @@ fn get_full_scan_paths() -> Vec<std::path::PathBuf> {
     paths
 }
 
-/// Collect scannable files from paths
-/// Quick scan uses this to avoid hashing large ISOs/installers that dominate scan time.
 fn collect_files(
     paths: &[std::path::PathBuf],
     max_depth: Option<usize>,
@@ -486,7 +427,6 @@ fn collect_files(
     use crate::core::utils::is_scannable_file;
     use crate::core::yara_scanner::{file_contains_eicar_test_marker, is_eicar_candidate_path};
 
-    // Directories to always skip - they add thousands of files and never contain real malware
     let skip_dirs: &[&str] = &[
         "node_modules",
         ".git",
@@ -529,7 +469,6 @@ fn collect_files(
         for entry in walker
             .into_iter()
             .filter_entry(|e| {
-                // Skip known non-malware directories to reduce scan count
                 if e.file_type().is_dir() {
                     if let Some(name) = e.file_name().to_str() {
                         if skip_dirs.contains(&name) {
@@ -543,7 +482,6 @@ fn collect_files(
         {
             let path = entry.path();
             if path.is_file() {
-                // Skip files larger than max_file_size (quick scan optimization)
                 if let Some(max_size) = max_file_size {
                     if let Ok(metadata) = path.metadata() {
                         if metadata.len() > max_size {
@@ -573,7 +511,6 @@ fn collect_files(
     files
 }
 
-/// Start a folder/directory scan
 #[tauri::command]
 pub async fn start_scan(
     app: tauri::AppHandle,
@@ -588,8 +525,6 @@ pub async fn start_scan(
         custom_path
     );
 
-    // Atomically check and set IS_SCANNING to prevent race condition
-    // compare_exchange returns Err if current value != expected (false), meaning scan already running
     if IS_SCANNING
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -598,7 +533,6 @@ pub async fn start_scan(
         return Err("A scan is already in progress. If this seems incorrect, try resetting the scan state from Settings.".to_string());
     }
 
-    // Validate paths synchronously so we can return errors to the frontend immediately
     let paths: Vec<std::path::PathBuf> = match scan_type.to_lowercase().as_str() {
         "quick" => get_quick_scan_paths(),
         "full" => get_full_scan_paths(),
@@ -631,29 +565,21 @@ pub async fn start_scan(
         return Err("No valid paths to scan".to_string());
     }
 
-    // Initialize scan state immediately so the frontend can start polling right away
-    // IS_SCANNING is already true from compare_exchange above
     scan_started_internal();
 
-    // Store the current scan type so the UI can display it during file collection
     if let Ok(mut st) = CURRENT_SCAN_TYPE.write() {
         *st = Some(scan_type.clone());
     }
 
-    // Return immediately to the frontend - file collection and scanning happen in the background
-    // This prevents the UI from freezing during the (potentially long) file collection phase
     let scan_type_clone = scan_type.clone();
     let is_quick_scan = scan_type.to_lowercase() == "quick";
     let max_depth = if is_quick_scan { Some(2) } else { None };
 
     let app_for_panic = app.clone();
     let scan_type_for_panic = scan_type_clone.clone();
-    // Capture the generation so this task can detect if a newer scan superseded it
     let my_generation = SCAN_GENERATION.load(Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
         let result = tokio::task::spawn(async move {
-            // Phase 1: Collect files (can be slow for full scans)
-            // Quick scan skips files > 50MB to avoid hashing large ISOs/installers
             let max_file_size: Option<u64> = if is_quick_scan {
                 Some(50_000_000)
             } else {
@@ -666,12 +592,10 @@ pub async fn start_scan(
                 max_file_size
             );
 
-            // Detect single-file custom scan (skip directory walking)
             let is_single_file = paths.len() == 1 && paths[0].is_file();
 
             let files = match tauri::async_runtime::spawn_blocking(move || {
                 if is_single_file {
-                    // Single file - no need to walk directories
                     if let Some(path_str) = paths[0].to_str() {
                         vec![path_str.to_string()]
                     } else {
@@ -725,7 +649,6 @@ pub async fn start_scan(
                 return;
             }
 
-            // Phase 2: Set total and start scanning
             set_total_files(files.len() as u32);
             log::info!(
                 "Starting {} scan with {} files",
@@ -739,7 +662,6 @@ pub async fn start_scan(
                 std::time::Duration::from_secs(60)
             };
 
-            // Read worker count from settings; clamp to [1, 32]
             let concurrency = crate::config::settings::Settings::load()
                 .scan_worker_count
                 .clamp(1, 16) as usize;
@@ -762,8 +684,6 @@ pub async fn start_scan(
                             if is_quick_scan {
                                 DetectionPipeline::scan_file_quick(&file_path).await
                             } else {
-                                // Manual rescans should always re-evaluate the file so newly
-                                // added signatures are not hidden by an old cached clean verdict.
                                 DetectionPipeline::scan_file_with_options(&file_path, true).await
                             }
                         })
@@ -798,7 +718,6 @@ pub async fn start_scan(
                             }
                             Ok(Err(e)) => {
                                 log::warn!("Failed to scan {}: {}", file_path, e);
-                                // this file is simply not counted in any verdict bucket
                             }
                             Err(_) => {
                                 log::warn!(
@@ -806,7 +725,6 @@ pub async fn start_scan(
                                     timeout.as_secs(),
                                     file_path
                                 );
-                                // Don't record as "Clean" - timeouts are not verified clean files
                             }
                         }
 
@@ -817,7 +735,6 @@ pub async fn start_scan(
                 .collect::<()>()
                 .await;
 
-            // Check if this scan was superseded by a newer one
             let current_gen = SCAN_GENERATION.load(Ordering::SeqCst);
             if current_gen != my_generation {
                 log::info!(
@@ -832,7 +749,6 @@ pub async fn start_scan(
                 log::info!("Scan cancelled");
             }
 
-            // Build summary
             let total = TOTAL_FILES.load(Ordering::SeqCst);
             let scanned = FILES_SCANNED.load(Ordering::SeqCst);
             let summary = ScanSummary {
@@ -861,7 +777,6 @@ pub async fn start_scan(
         })
         .await;
 
-        // Check generation again for the panic handler
         let current_gen = SCAN_GENERATION.load(Ordering::SeqCst);
         if let Err(e) = result {
             log::error!("Scan task panicked: {}", e);
@@ -900,7 +815,6 @@ pub fn cancel_scan() -> Result<(), String> {
     Ok(())
 }
 
-/// Force reset scan state - use when scan gets stuck
 #[tauri::command]
 pub fn force_reset_scan() -> Result<(), String> {
     log::warn!("Force resetting scan state");
@@ -910,7 +824,6 @@ pub fn force_reset_scan() -> Result<(), String> {
     Ok(())
 }
 
-/// Pick a folder for custom scan (opens native folder dialog)
 #[tauri::command]
 pub async fn pick_scan_folder(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
@@ -927,7 +840,6 @@ pub async fn pick_scan_folder(app: tauri::AppHandle) -> Result<Option<String>, S
     }
 }
 
-/// Pick a file for custom scan (opens native file dialog)
 #[tauri::command]
 pub async fn pick_scan_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
@@ -944,11 +856,6 @@ pub async fn pick_scan_file(app: tauri::AppHandle) -> Result<Option<String>, Str
     }
 }
 
-// ============================================================================
-// Export Scan Report
-// ============================================================================
-
-/// Scan report for export
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanReport {
@@ -1011,10 +918,6 @@ fn verdict_to_threat_detail(verdict: &crate::database::models::Verdict) -> Threa
     }
 }
 
-/// Return threat details recorded during the most recent manual scan.
-/// The result is scoped to the current scan window using `SCAN_START_TIME`,
-/// so the frontend can reliably hydrate the completed scan view even if
-/// some live `scan-result` events were missed.
 #[tauri::command]
 pub async fn get_last_manual_scan_threats(limit: Option<u32>) -> Result<Vec<ThreatDetail>, String> {
     let scan_start_ms = SCAN_START_TIME.load(Ordering::SeqCst);
@@ -1068,7 +971,6 @@ pub async fn get_last_manual_scan_threats(limit: Option<u32>) -> Result<Vec<Thre
     .map_err(|e| e.to_string())?)
 }
 
-/// Export scan report as JSON
 #[tauri::command]
 pub async fn export_scan_report(output_path: String) -> Result<String, String> {
     use chrono::Utc;
@@ -1095,7 +997,6 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
 
     let scan_start_seconds = (SCAN_START_TIME.load(Ordering::SeqCst) / 1000) as i64;
 
-    // Export only threats from the current/most recent manual scan window.
     let threats: Vec<ThreatDetail> = crate::with_db_async(move |conn| {
         let mut stmt = conn
             .prepare(

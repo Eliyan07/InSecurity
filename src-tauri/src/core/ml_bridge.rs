@@ -1,6 +1,3 @@
-//! ML Model Bridge
-//!
-//! Classifier inference is done via ONNX Runtime (Rust-native).
 use crate::ml::OnnxClassifier;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -23,8 +20,6 @@ pub struct MLPrediction {
     pub confidence: f64,
     pub malware_family: Option<String>,
     pub model_version: String,
-    /// Whether the ML model was actually available for prediction
-    /// If false, the prediction is a placeholder and should not be trusted
     #[serde(default)]
     pub model_available: bool,
     #[serde(default)]
@@ -63,12 +58,6 @@ impl MLBridge {
         }
     }
 
-    /// Classify a file using the ONNX-based LightGBM model.
-    ///
-    /// This replaces `predict_with_py3`, which crashed with STATUS_ACCESS_VIOLATION
-    /// because LightGBM's OpenMP thread pool cannot initialize inside the embedded
-    /// Python runtime on Windows.  ONNX Runtime runs entirely in Rust — no Python,
-    /// no OpenMP, no crash.
     pub fn predict_onnx(&self, features: Vec<f64>) -> Result<MLPrediction, String> {
         let clf = self
             .onnx_classifier
@@ -182,9 +171,9 @@ mod tests {
         let json =
             r#"{"is_malware":false,"confidence":0.1,"malware_family":null,"model_version":"2.0"}"#;
         let pred: MLPrediction = serde_json::from_str(json).unwrap();
-        assert_eq!(pred.model_available, false); // default
-        assert_eq!(pred.verdict, MLVerdict::Unknown); // default
-        assert_eq!(pred.raw_score, 0.0); // default
+        assert_eq!(pred.model_available, false);
+        assert_eq!(pred.verdict, MLVerdict::Unknown);
+        assert_eq!(pred.raw_score, 0.0);
     }
 
     #[test]
@@ -207,8 +196,8 @@ mod tests {
     fn test_novelty_prediction_defaults_from_partial_json() {
         let json = r#"{"is_novel":false,"anomaly_score":0.0}"#;
         let pred: NoveltyPrediction = serde_json::from_str(json).unwrap();
-        assert_eq!(pred.confidence, 0.0); // default
-        assert_eq!(pred.model_available, false); // default
+        assert_eq!(pred.confidence, 0.0);
+        assert_eq!(pred.model_available, false);
     }
 
     #[test]

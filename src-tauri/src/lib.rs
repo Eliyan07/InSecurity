@@ -1,7 +1,6 @@
 pub mod cache;
 pub mod commands;
 pub mod config;
-/// Malware Detection Pipeline - Rust Backend
 pub mod core;
 pub mod database;
 pub mod errors;
@@ -24,28 +23,18 @@ use windows_sys::Win32::{
     UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE},
 };
 
-/// Thread-safe storage for Tauri resource directory path
-/// This replaces the unsafe std::env::set_var approach
 static TAURI_RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Global ONNX classifier (loaded once at startup, shared across spawn_blocking tasks).
-/// `ort::Session` is Send + Sync; the Option is None when model.onnx is not found.
 pub static ONNX_CLASSIFIER: OnceLock<Option<std::sync::Arc<ml::OnnxClassifier>>> = OnceLock::new();
 
-/// Global ONNX novelty detector (IsolationForest).
-/// None when model.onnx is not found or conversion script has not been run.
 pub static NOVELTY_MODEL: OnceLock<Option<std::sync::Arc<ml::OnnxNoveltyDetector>>> =
     OnceLock::new();
 
-/// When true, the app is allowed to fully exit (set by tray Quit action).
-/// Default false - closing the window just hides to tray.
 static ALLOW_EXIT: AtomicBool = AtomicBool::new(false);
 
-/// Process-wide guard that keeps the named single-instance mutex alive.
 #[cfg(target_os = "windows")]
 static SINGLE_INSTANCE_MUTEX: OnceLock<isize> = OnceLock::new();
 
-/// Get the Tauri resource directory path (thread-safe)
 pub fn get_resource_dir() -> Option<&'static PathBuf> {
     TAURI_RESOURCE_DIR.get()
 }
@@ -89,19 +78,13 @@ fn acquire_single_instance_guard() -> Result<bool, String> {
     Ok(true)
 }
 
-// Global database connection
 static DB: once_cell::sync::Lazy<Mutex<Option<Connection>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
-/// Get a reference to the global database mutex for use by internal modules
-/// Returns None if the database hasn't been initialized yet
 pub fn get_database() -> Option<&'static Mutex<Option<Connection>>> {
     Some(&DB)
 }
 
-/// Execute a function with a database connection
-/// This is a helper to reduce boilerplate for DB access patterns
-/// Returns None if the database is not available or the closure returns None
 pub fn with_db<T, F>(f: F) -> Option<T>
 where
     F: FnOnce(&Connection) -> Option<T>,
@@ -109,8 +92,6 @@ where
     DB.lock().ok().and_then(|guard| guard.as_ref().and_then(f))
 }
 
-/// Execute a function with a database connection, returning a Result
-/// This is a helper for operations that can fail
 pub fn with_db_result<T, E, F>(f: F) -> Result<T, E>
 where
     E: From<String>,
@@ -125,8 +106,6 @@ where
     }
 }
 
-/// Execute a blocking DB operation on a separate thread pool to avoid blocking the UI.
-/// Use this for commands that involve DB or file I/O operations.
 pub async fn with_db_async<T, F>(f: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -143,15 +122,6 @@ where
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Execute a read-only DB operation with a **separate** connection.
-/// This opens a fresh read-only connection to the same database,
-/// completely bypassing the global DB Mutex. Use this for read-only
-/// queries (e.g. list_quarantined, get_dashboard_stats) that should
-/// never block behind long-running write operations or heavy tasks
-/// that also use spawn_blocking (like insight signature verification).
-///
-/// SQLite in WAL mode supports concurrent readers, so this is safe.
-/// Uses a persistent pooled connection to avoid reopening + PRAGMA overhead.
 static READ_DB: once_cell::sync::Lazy<Mutex<Option<Connection>>> =
     once_cell::sync::Lazy::new(|| {
         let db_path = dirs::data_dir()
@@ -227,9 +197,6 @@ pub fn run() {
 
     match Connection::open(&db_path) {
         Ok(conn) => {
-            // CRITICAL: Configure SQLite for concurrent access
-            // WAL mode allows readers and writers to operate simultaneously
-            // busy_timeout prevents immediate SQLITE_BUSY errors when the DB is locked
             if let Err(e) = conn.execute_batch(
                 "PRAGMA journal_mode=WAL;
                  PRAGMA busy_timeout=5000;
@@ -275,7 +242,6 @@ pub fn run() {
                 }
             }
 
-            // Defer backfill to background - it's a migration that doesn't affect reads
             std::thread::spawn(|| {
                 if let Ok(guard) = DB.lock() {
                     if let Some(ref conn) = *guard {
@@ -289,9 +255,6 @@ pub fn run() {
                 }
             });
 
-            // Defer blacklist + whitelist loading to a background thread.
-            // Real-time protection starts after setup() returns, so these will
-            // typically finish before the first FS event arrives (< 200ms).
             std::thread::spawn(|| {
                 if let Err(e) = crate::core::static_scanner::refresh_blacklist() {
                     log::error!("Failed to load blacklist from DB at startup: {}", e);
@@ -302,7 +265,6 @@ pub fn run() {
                 crate::core::static_scanner::initialize_whitelist();
                 log::info!("In-memory whitelist initialized");
 
-                // Sync user whitelist file with DB (reconcile orphans from old versions)
                 if let Ok(guard) = crate::DB.lock() {
                     if let Some(ref conn) = *guard {
                         match conn.prepare("SELECT file_hash FROM user_whitelist") {
@@ -326,9 +288,6 @@ pub fn run() {
                 }
             });
 
-            // Pre-warm quarantine encryption key in background.
-            // Argon2 KDF costs ~500ms; doing this now avoids a cold-start
-            // penalty the first time the user opens the Quarantine page.
             std::thread::spawn(|| {
                 use crate::core::quarantine_manager::QuarantineManager;
                 let qpath = dirs::data_dir()
@@ -342,9 +301,6 @@ pub fn run() {
                 }
             });
 
-            // Pre-warm insight signature cache in background.
-            // This runs the batch PowerShell verification (~2-5s) at startup
-            // so the Insights page loads near-instantly when the user opens it.
             std::thread::spawn(|| {
                 crate::commands::insights::prefetch_insight_signatures();
                 log::info!("Insight signature cache pre-warmed");
@@ -355,11 +311,6 @@ pub fn run() {
         }
     }
 
-    // =========================================================================
-    // TAMPER PROTECTION: Startup checks
-    // =========================================================================
-
-    // Log app start for audit trail
     crate::core::log_audit_event(
         crate::core::AuditEventType::AppStarted,
         "Application started",
@@ -367,11 +318,10 @@ pub fn run() {
         None,
     );
 
-    // Check if protection was unexpectedly down (crash/kill detection)
     let needs_missed_scan = {
         let status_guard = crate::core::tamper_protection::PROTECTION_STATUS.lock();
         if let Ok(status) = status_guard {
-            let needs_scan = status.needs_missed_events_scan(300); // 5 min threshold
+            let needs_scan = status.needs_missed_events_scan(300);
             if status.was_unexpectedly_down() {
                 log::warn!(
                     "Protection was unexpectedly terminated! Gap: {}s",
@@ -393,7 +343,6 @@ pub fn run() {
         }
     };
 
-    // Defer integrity check to a background thread - doesn't need to block startup
     if let Some(res_dir) = TAURI_RESOURCE_DIR.get() {
         let res_dir = res_dir.clone();
         std::thread::spawn(move || {
@@ -430,9 +379,6 @@ pub fn run() {
         });
     }
 
-    // Initialize the ONNX classifier (Rust-native, no Python/OpenMP dependency).
-    // Must happen before the Tauri file watcher starts so that the first
-    // spawn_blocking ML task finds the classifier ready.
     {
         let candidates = [
             "resources/models/classifier/model.onnx",
@@ -462,8 +408,6 @@ pub fn run() {
         }
     }
 
-    // Initialize ONNX novelty detector (IsolationForest).
-    // Requires running `python scripts/convert_novelty_to_onnx.py` once.
     {
         let candidates = [
             "resources/models/novelty/model.onnx",
@@ -507,7 +451,6 @@ pub fn run() {
     let app_builder = builder
         .setup(move |app| {
             if let Ok(res) = app.path().resource_dir() {
-                // Store in thread-safe OnceLock instead of unsafe env var
                 if TAURI_RESOURCE_DIR.set(res.clone()).is_err() {
                     log::warn!("TAURI_RESOURCE_DIR was already set");
                 }
@@ -518,10 +461,6 @@ pub fn run() {
 
             let cfg = crate::config::settings::Settings::load();
 
-            // Always start the file watcher and process monitor threads.
-            // If real-time protection is disabled in settings, the threads
-            // will idle (checking PROTECTION_DISABLED flag) until re-enabled,
-            // so the user can toggle protection at runtime without restarting.
             if !cfg.real_time_protection {
                 crate::core::real_time::set_protection_disabled(true);
             }
@@ -538,8 +477,6 @@ pub fn run() {
                     watch_paths.push(d);
                 }
 
-                // Include user-configured protected folders that aren't already
-                // covered by an existing watch path (e.g. folders on other drives)
                 for folder in &cfg.protected_folders {
                     let folder_path = PathBuf::from(folder);
                     let already_covered = watch_paths.iter().any(|wp| folder_path.starts_with(wp));
@@ -549,13 +486,11 @@ pub fn run() {
                     }
                 }
 
-                // Load configurable ransomware thresholds from settings
                 crate::core::real_time::reload_ransomware_thresholds(
                     cfg.ransomware_threshold,
                     cfg.ransomware_window_seconds,
                 );
 
-                // Deploy canary/honeypot files in protected folders
                 for folder in &cfg.protected_folders {
                     match crate::core::real_time::deploy_canary_files_for_folder(folder) {
                         Ok(paths) => {
@@ -583,7 +518,6 @@ pub fn run() {
             if cfg.real_time_protection {
                 log::info!("Real-time protection started successfully");
 
-                // Log protection enabled in audit
                 crate::core::log_audit_event(
                     crate::core::AuditEventType::ProtectionEnabled,
                     "Real-time protection enabled",
@@ -594,10 +528,8 @@ pub fn run() {
                 log::info!("Real-time protection is disabled in settings (watchers idle)");
             }
 
-            // Start protection heartbeat (updates every 60s to track uptime)
             spawn_protection_heartbeat();
 
-            // If protection was unexpectedly down, scan high-risk directories
             if needs_missed_scan {
                 log::warn!("Protection was down - starting missed-events scan");
                 spawn_missed_events_scan(app.handle().clone());
@@ -606,28 +538,22 @@ pub fn run() {
             spawn_initial_threat_seed();
             spawn_whitelist_generator();
 
-            // Pre-warm the YARA-X compiler in background so the first scan
-            // doesn't pay the rule compilation cost.
             std::thread::spawn(|| {
-                let _ = crate::core::yara_scanner::get_rule_count(); // Forces Lazy init of YARA_SCANNER
+                let _ = crate::core::yara_scanner::get_rule_count();
                 log::info!("YARA-X rules compiled in background");
             });
 
             spawn_automatic_threat_updates();
 
-            // Start the scheduled scan checker
             spawn_scheduled_scan_checker(app.handle().clone());
 
-            // --- Network security startup ---
             {
                 let settings = crate::config::Settings::load();
 
-                // Seed network monitor defaults in background
                 std::thread::spawn(|| {
                     crate::core::network_monitor::seed_default_malicious_ips();
                 });
 
-                // If network monitoring was enabled, start the monitor thread
                 if settings.network_monitoring_enabled {
                     crate::core::network_monitor::set_monitor_enabled(true);
                     crate::core::network_monitor::start_network_monitor(app.handle().clone());
@@ -635,7 +561,6 @@ pub fn run() {
                 }
             }
 
-            // --- System tray icon + menu ---
             {
                 use tauri::menu::{MenuBuilder, MenuItemBuilder};
                 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -703,7 +628,6 @@ pub fn run() {
                     .build(app)?;
             }
 
-            // --- Autostart: sync registry with settings ---
             {
                 use tauri_plugin_autostart::ManagerExt;
                 let autostart_mgr = app.autolaunch();
@@ -815,7 +739,6 @@ pub fn run() {
             commands::settings::set_malwarebazaar_api_key,
             commands::app_updates::check_app_update,
             commands::app_updates::dismiss_app_update,
-            // Network security commands
             commands::network::get_active_connections,
             commands::network::get_network_events,
             commands::network::get_network_threats,
@@ -828,7 +751,6 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // If Quit was clicked, allow the close to proceed naturally
                 if !ALLOW_EXIT.load(Ordering::SeqCst) {
                     api.prevent_close();
                     let _ = window.hide();
@@ -841,7 +763,6 @@ pub fn run() {
         .expect("error building tauri app")
         .run(|_app, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                // Only prevent exit if Quit wasn't explicitly clicked
                 if !ALLOW_EXIT.load(Ordering::SeqCst) {
                     api.prevent_exit();
                 }
@@ -849,7 +770,6 @@ pub fn run() {
         });
 }
 
-/// Seed initial threat data from MalwareBazaar on first launch
 fn spawn_initial_threat_seed() {
     tauri::async_runtime::spawn(async move {
         let needs_seed = {
@@ -892,7 +812,6 @@ fn spawn_initial_threat_seed() {
     });
 }
 
-/// Spawn automatic periodic threat database updates (every 6 hours)
 fn spawn_automatic_threat_updates() {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(300)).await;
@@ -921,25 +840,19 @@ fn spawn_automatic_threat_updates() {
     });
 }
 
-/// Spawn scheduled scan checker that runs periodically
 fn spawn_scheduled_scan_checker(app_handle: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
-        // Wait 60 seconds after startup before checking
         tokio::time::sleep(Duration::from_secs(60)).await;
 
-        // Check every minute for due scans
         let mut interval = tokio::time::interval(Duration::from_secs(60));
 
         loop {
             interval.tick().await;
 
-            // Skip if a manual scan is in progress
             if crate::commands::scan::is_scanning() {
                 continue;
             }
 
-            // Check for due scans - run the sync DB.lock() call on the blocking pool
-            // to avoid blocking a tokio worker thread
             let due_scan = tauri::async_runtime::spawn_blocking(|| {
                 crate::commands::scheduled_scans::get_next_due_scan()
             })
@@ -957,7 +870,6 @@ fn spawn_scheduled_scan_checker(app_handle: tauri::AppHandle) {
                 Ok(Some(scan)) => {
                     log::info!("Running scheduled scan '{}' (ID: {})", scan.name, scan.id);
 
-                    // Start the scan
                     let scan_result = crate::commands::scan::start_scan(
                         app_handle.clone(),
                         scan.scan_type.clone(),
@@ -990,7 +902,6 @@ fn spawn_scheduled_scan_checker(app_handle: tauri::AppHandle) {
                     }
                 }
                 Ok(None) => {
-                    // No due scans
                 }
                 Err(e) => {
                     log::debug!("Error checking for scheduled scans: {}", e);
@@ -1000,12 +911,8 @@ fn spawn_scheduled_scan_checker(app_handle: tauri::AppHandle) {
     });
 }
 
-/// Generate system file whitelist on first launch
 fn spawn_whitelist_generator() {
     std::thread::spawn(|| {
-        // Wait 30s before starting to let the app settle -
-        // whitelist generation hashes hundreds of system files and
-        // competes for disk I/O with early user interactions.
         std::thread::sleep(Duration::from_secs(30));
 
         let whitelist_path = dirs::data_dir()
@@ -1051,8 +958,6 @@ fn spawn_whitelist_generator() {
                             hashes.len(),
                             whitelist_path
                         );
-                        // Reload into memory so the whitelist takes effect immediately
-                        // without requiring an app restart.
                         crate::core::static_scanner::initialize_whitelist();
                         log::info!(
                             "In-memory whitelist refreshed with {} new system hashes",
@@ -1071,10 +976,7 @@ fn spawn_whitelist_generator() {
     });
 }
 
-/// Spawn protection heartbeat - updates status every 60 seconds
-/// This allows detection of unexpected termination on next startup
 fn spawn_protection_heartbeat() {
-    // Use tokio timer instead of wasting an OS thread on sleep loops
     tauri::async_runtime::spawn(async {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         loop {
@@ -1084,13 +986,10 @@ fn spawn_protection_heartbeat() {
     });
 }
 
-/// Spawn missed-events scan if protection was down
-/// Scans high-risk directories (Downloads, Desktop, Temp) for threats
 fn spawn_missed_events_scan(_app_handle: tauri::AppHandle) {
     use crate::core::get_missed_events_scan_paths;
 
     tauri::async_runtime::spawn(async move {
-        // Small delay to let the app fully initialize
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
         let paths = get_missed_events_scan_paths();
@@ -1117,11 +1016,10 @@ fn spawn_missed_events_scan(_app_handle: tauri::AppHandle) {
                 continue;
             }
 
-            // Only scan recent files (modified in last 24 hours)
             let cutoff = chrono::Utc::now().timestamp() - (24 * 3600);
 
             let walker = walkdir::WalkDir::new(&path)
-                .max_depth(2) // Don't go too deep
+                .max_depth(2)
                 .follow_links(false);
 
             for entry in walker.into_iter().filter_map(|e| e.ok()) {
@@ -1129,12 +1027,11 @@ fn spawn_missed_events_scan(_app_handle: tauri::AppHandle) {
                     continue;
                 }
 
-                // Check modification time
                 if let Ok(metadata) = entry.metadata() {
                     if let Ok(modified) = metadata.modified() {
                         if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
                             if (duration.as_secs() as i64) < cutoff {
-                                continue; // Skip old files
+                                continue;
                             }
                         }
                     }
@@ -1142,7 +1039,6 @@ fn spawn_missed_events_scan(_app_handle: tauri::AppHandle) {
 
                 let file_path = entry.path().to_string_lossy().to_string();
 
-                // Quick scan only (hash lookups, no deep analysis)
                 match crate::core::DetectionPipeline::scan_file_quick(&file_path).await {
                     Ok(result) => {
                         if result.verdict != crate::core::pipeline::Verdict::Clean {
@@ -1178,7 +1074,6 @@ fn spawn_missed_events_scan(_app_handle: tauri::AppHandle) {
     });
 }
 
-// Global cache manager used across runtime threads - accessible via crate::CACHE_MANAGER
 pub static CACHE_MANAGER: once_cell::sync::Lazy<
     std::sync::Arc<std::sync::Mutex<crate::cache::cache_manager::CacheManager>>,
 > = once_cell::sync::Lazy::new(|| {

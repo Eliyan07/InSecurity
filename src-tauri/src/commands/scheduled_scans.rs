@@ -1,5 +1,4 @@
 use chrono::{Datelike, NaiveTime, Utc};
-/// Scheduled Scans commands
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -36,12 +35,12 @@ impl From<&str> for ScheduleFrequency {
 pub struct ScheduledScan {
     pub id: i64,
     pub name: String,
-    pub scan_type: String, // "quick", "full", "custom"
+    pub scan_type: String,
     pub custom_path: Option<String>,
-    pub frequency: String,         // "daily", "weekly", "monthly"
-    pub time_of_day: String,       // "HH:MM" format (24h)
-    pub day_of_week: Option<i32>,  // 0-6 (Sunday-Saturday) for weekly
-    pub day_of_month: Option<i32>, // 1-31 for monthly
+    pub frequency: String,
+    pub time_of_day: String,
+    pub day_of_week: Option<i32>,
+    pub day_of_month: Option<i32>,
     pub enabled: bool,
     pub last_run: Option<i64>,
     pub next_run: i64,
@@ -75,7 +74,6 @@ pub struct UpdateScheduledScan {
     pub enabled: Option<bool>,
 }
 
-/// Calculate the next run time based on schedule parameters
 fn calculate_next_run(
     frequency: &str,
     time_of_day: &str,
@@ -84,7 +82,6 @@ fn calculate_next_run(
 ) -> i64 {
     let now = Utc::now();
 
-    // Parse time_of_day (HH:MM)
     let parts: Vec<&str> = time_of_day.split(':').collect();
     let (hour, minute) = if parts.len() == 2 {
         (
@@ -111,7 +108,7 @@ fn calculate_next_run(
             }
         }
         "weekly" => {
-            let target_weekday = day_of_week.unwrap_or(0).clamp(0, 6); // Default to Sunday, clamp to valid range
+            let target_weekday = day_of_week.unwrap_or(0).clamp(0, 6);
             let current_weekday = now.weekday().num_days_from_sunday() as i32;
             let mut days_until = target_weekday - current_weekday;
 
@@ -122,19 +119,17 @@ fn calculate_next_run(
             (today_at_target_utc + chrono::Duration::days(days_until as i64)).timestamp()
         }
         "monthly" => {
-            let target_day = day_of_month.unwrap_or(1).clamp(1, 28) as u32; // Clamp to 1-28 for safety
+            let target_day = day_of_month.unwrap_or(1).clamp(1, 28) as u32;
             let current_day = now.day();
 
             let next_run = if current_day < target_day
                 || (current_day == target_day && now.time() < target_time)
             {
-                // This month
                 now.date_naive()
                     .with_day(target_day)
                     .unwrap_or(now.date_naive())
                     .and_time(target_time)
             } else {
-                // Next month
                 let next_month = if now.month() == 12 {
                     now.with_year(now.year() + 1)
                         .and_then(|d| d.with_month(1))
@@ -155,7 +150,6 @@ fn calculate_next_run(
     }
 }
 
-/// Get all scheduled scans
 #[tauri::command]
 pub async fn get_scheduled_scans() -> Result<Vec<ScheduledScan>, String> {
     crate::with_db_async(|conn| {
@@ -196,10 +190,8 @@ pub async fn get_scheduled_scans() -> Result<Vec<ScheduledScan>, String> {
     .await
 }
 
-/// Create a new scheduled scan
 #[tauri::command]
 pub async fn create_scheduled_scan(scan: CreateScheduledScan) -> Result<ScheduledScan, String> {
-    // Validate inputs before touching DB
     if !["quick", "full", "custom"].contains(&scan.scan_type.to_lowercase().as_str()) {
         return Err("Invalid scan type. Must be 'quick', 'full', or 'custom'".to_string());
     }
@@ -285,11 +277,9 @@ pub async fn create_scheduled_scan(scan: CreateScheduledScan) -> Result<Schedule
     })
 }
 
-/// Update an existing scheduled scan
 #[tauri::command]
 pub async fn update_scheduled_scan(update: UpdateScheduledScan) -> Result<ScheduledScan, String> {
     crate::with_db_async(move |conn| {
-        // Fetch the existing scan
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, scan_type, custom_path, frequency, time_of_day,
@@ -380,7 +370,6 @@ pub async fn update_scheduled_scan(update: UpdateScheduledScan) -> Result<Schedu
     .await
 }
 
-/// Toggle a scheduled scan's enabled state
 #[tauri::command]
 pub async fn toggle_scheduled_scan(id: i64) -> Result<bool, String> {
     crate::with_db_async(move |conn| {
@@ -412,7 +401,6 @@ pub async fn toggle_scheduled_scan(id: i64) -> Result<bool, String> {
     .await
 }
 
-/// Delete a scheduled scan
 #[tauri::command]
 pub async fn delete_scheduled_scan(id: i64) -> Result<(), String> {
     crate::with_db_async(move |conn| {
@@ -431,8 +419,6 @@ pub async fn delete_scheduled_scan(id: i64) -> Result<(), String> {
     .await
 }
 
-/// Run a scheduled scan immediately (triggered by "Run Now" in the UI).
-/// Fetches the scan config by ID and starts the scan via the normal scan machinery.
 #[tauri::command]
 pub async fn run_scheduled_scan_now(app: tauri::AppHandle, id: i64) -> Result<(), String> {
     let scan = crate::with_db_async(move |conn| {
@@ -475,10 +461,8 @@ pub async fn run_scheduled_scan_now(app: tauri::AppHandle, id: i64) -> Result<()
     crate::commands::scan::start_scan(app, scan.scan_type, scan.custom_path).await
 }
 
-/// Get the next scheduled scan that is due
 #[tauri::command]
 pub fn get_next_due_scan() -> Result<Option<ScheduledScan>, String> {
-    // NOTE: This is intentionally sync - it's called from background task, not frontend
     let now = Utc::now().timestamp();
 
     let guard = crate::DB
@@ -521,9 +505,7 @@ pub fn get_next_due_scan() -> Result<Option<ScheduledScan>, String> {
     Ok(scan)
 }
 
-/// Mark a scheduled scan as completed and update next_run
 pub fn mark_scan_completed(id: i64) -> Result<(), String> {
-    // NOTE: This is intentionally sync - called from background task
     let now = Utc::now().timestamp();
 
     let guard = crate::DB

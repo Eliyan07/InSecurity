@@ -1,5 +1,3 @@
-//! Detection Pipeline Orchestrator
-
 #[cfg(feature = "emulation")]
 use crate::core::emulation::{EmulationConfig, Emulator};
 use crate::core::{
@@ -18,7 +16,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "emulation")]
 use std::time::Duration;
 
-/// Maximum file size for scanning (100MB)
 pub const MAX_SCAN_SIZE: u64 = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -166,8 +163,6 @@ impl DetectionPipeline {
         false
     }
 
-    /// Async version of is_excluded that runs DB access on a blocking thread
-    /// Use this in scan_file_internal to avoid blocking the tokio runtime
     async fn is_excluded_async(file_path: &str) -> bool {
         let path = file_path.to_string();
         crate::with_db_async(move |conn| {
@@ -180,13 +175,10 @@ impl DetectionPipeline {
         .unwrap_or(false)
     }
 
-    /// Run complete detection pipeline on a file
     pub async fn scan_file(file_path: &str) -> Result<ScanResult, Box<dyn std::error::Error>> {
         Self::scan_file_internal(file_path, false, false).await
     }
 
-    /// Run complete detection pipeline on a file, optionally bypassing cache
-    /// Use bypass_cache=true for manual scans (Quick/Full scan) to force fresh analysis
     pub async fn scan_file_with_options(
         file_path: &str,
         bypass_cache: bool,
@@ -204,7 +196,6 @@ impl DetectionPipeline {
     ) -> Result<ScanResult, Box<dyn std::error::Error>> {
         let start = std::time::Instant::now();
 
-        // Skip non-scannable files immediately
         if !is_scannable_file(file_path) {
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
@@ -248,7 +239,6 @@ impl DetectionPipeline {
             });
         }
 
-        // Skip system paths
         if is_system_path(file_path) {
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
@@ -278,8 +268,6 @@ impl DetectionPipeline {
             ));
         }
 
-        // Compute hash on a blocking thread to avoid starving the tokio runtime
-        // File I/O is synchronous and would block the async executor otherwise
         let file_path_owned = file_path.to_string();
         let file_hash = tokio::task::spawn_blocking(move || {
             ingestion::compute_file_hash(&file_path_owned).unwrap_or_default()
@@ -308,7 +296,6 @@ impl DetectionPipeline {
             });
         }
 
-        // Check blacklist (known malware) - instant
         if static_scanner::is_blacklisted(&file_hash) {
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
@@ -330,7 +317,6 @@ impl DetectionPipeline {
             });
         }
 
-        // Check whitelist (known good) - instant
         if static_scanner::is_whitelisted(&file_hash) {
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
@@ -352,10 +338,6 @@ impl DetectionPipeline {
             });
         }
 
-        // For unknown files in high-risk locations (Downloads, Desktop,
-        // Temp, drive root, etc.), run the full detection pipeline. The file
-        // already passed is_scannable_file() above, so it has a risky
-        // extension.
         if crate::core::utils::is_high_risk_path(file_path) {
             log::info!(
                 "Quick scan: unknown file in high-risk path, running full pipeline: {}",
@@ -364,8 +346,6 @@ impl DetectionPipeline {
             return Self::scan_file_with_options(file_path, true).await;
         }
 
-        // Low-risk unknowns (trusted locations, non-download paths):
-        // return clean with lower confidence
         Ok(ScanResult {
             file_path: file_path.to_string(),
             file_hash,
@@ -386,7 +366,6 @@ impl DetectionPipeline {
         })
     }
 
-    /// Internal scan implementation (full pipeline)
     async fn scan_file_internal(
         file_path: &str,
         bypass_cache: bool,
@@ -396,9 +375,6 @@ impl DetectionPipeline {
 
         let start = std::time::Instant::now();
 
-        // Rate limit only real-time scans, not manual scans (Quick/Full/Custom).
-        // Manual scans already have their own concurrency control via buffer_unordered.
-        // `is_scanning()` reads the IS_SCANNING AtomicBool - true during manual scans.
         if !bypass_cache && !crate::commands::scan::is_scanning() {
             if let Some(wait_seconds) = SCAN_RATE_LIMITER.acquire() {
                 log::warn!("Scan rate limited, please wait {} seconds", wait_seconds);
@@ -410,7 +386,7 @@ impl DetectionPipeline {
             }
         }
 
-        // Stage 0: Check exclusions first (fastest check) - async to avoid blocking tokio
+        // Stage 0: Exclusions
         if Self::is_excluded_async(file_path).await {
             log::debug!("File excluded from scanning: {}", file_path);
             return Ok(ScanResult {
@@ -433,7 +409,7 @@ impl DetectionPipeline {
             });
         }
 
-        // Stage 0.1: Skip app's own directory, build artifacts, and system paths
+        // Stage 0.1: Path filters
         if is_dev_build_artifact_path(file_path) {
             log::debug!("Skipping developer/build artifact path: {}", file_path);
             return Ok(ScanResult {
@@ -486,7 +462,7 @@ impl DetectionPipeline {
             ));
         }
 
-        // Stage 0.2: Skip non-executable file types (data files that can't contain malware)
+        // Stage 0.2: File-type filters
         if !is_scannable_file(file_path) {
             log::debug!("Skipping non-scannable file type: {}", file_path);
             let fp = file_path.to_string();
@@ -515,9 +491,7 @@ impl DetectionPipeline {
             });
         }
 
-        //  Stage 0.3: Check digital signature EARLY for trusted signed files
-        //  Only meaningful for PE executables - scripts, archives, etc. don't have
-        //  Authenticode signatures and the WinVerifyTrust call wastes ~50-200ms each.
+        // Stage 0.3: Signature precheck
         let is_pe_extension = {
             let ext = std::path::Path::new(file_path)
                 .extension()
@@ -575,9 +549,6 @@ impl DetectionPipeline {
         }
 
         if signature_info.is_valid && signature_info.is_trusted_publisher {
-            // Double-trust: valid signature from a known publisher AND in a trusted install location.
-            // Early-exit as Clean to avoid false positives from YARA/behavior matching legitimate
-            // OS/vendor functionality (e.g. OneDrive using crypto APIs, file enumeration, etc.).
             if is_trusted_publisher_path(file_path) {
                 log::info!(
                     "Trusted signed + trusted path - skipping analysis: {} (signer: {})",
@@ -618,7 +589,7 @@ impl DetectionPipeline {
             );
         }
 
-        // Stage 0.5: Quick hash check - compute hash and check cache before full scan
+        // Stage 0.5: Hash and cache
         let fp = file_path.to_string();
         let quick_hash = tokio::task::spawn_blocking(move || {
             ingestion::compute_file_hash(&fp).unwrap_or_default()
@@ -626,7 +597,6 @@ impl DetectionPipeline {
         .await
         .unwrap_or_default();
 
-        // Blacklist check before whitelist - blacklist always wins
         if !quick_hash.is_empty() && static_scanner::is_blacklisted(&quick_hash) {
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
@@ -670,11 +640,8 @@ impl DetectionPipeline {
             });
         }
 
-        // Check cache only if not bypassing (real-time uses cache, manual scans bypass it)
-        // Two-phase lookup: check in-memory cache first (short lock), then fall back to DB
-        // (separate lock) to avoid holding cache lock during DB I/O.
         if !bypass_cache && !quick_hash.is_empty() {
-            // Phase 1: Check in-memory cache (quick)
+            // Phase 1: In-memory cache
             let cached_result = {
                 if let Ok(mut cache_guard) = crate::CACHE_MANAGER.lock() {
                     cache_guard.get_cache_mut().get(&quick_hash)
@@ -682,7 +649,7 @@ impl DetectionPipeline {
                     None
                 }
             };
-            // Phase 2: If not in cache, try DB (without holding cache lock)
+            // Phase 2: Database fallback
             let cached_result = cached_result.or_else(|| {
                 let db_result = crate::with_db(|conn| {
                     crate::database::queries::DatabaseQueries::get_verdict_by_hash(
@@ -701,7 +668,6 @@ impl DetectionPipeline {
                         last_accessed: row.scanned_at as u64,
                         threat_name: row.threat_name.clone(),
                     };
-                    // Insert into cache (re-acquire lock briefly)
                     if let Ok(mut cache_guard) = crate::CACHE_MANAGER.lock() {
                         cache_guard
                             .get_cache_mut()
@@ -791,9 +757,7 @@ impl DetectionPipeline {
             });
         }
 
-        // Stage 1: Ingestion + Stage 2: Static Analysis
-        // Run on blocking thread - file I/O, hashing, YARA rules are all CPU/IO heavy
-        // Pass the precomputed SHA256 from Stage 0.5 to avoid hashing the file a second time.
+        // Stage 1 + 2: Ingestion and static analysis
         let fp = file_path.to_string();
         let precomputed_hash = quick_hash.clone();
         let (metadata, file_content, static_result) = tokio::task::spawn_blocking(move || {
@@ -825,7 +789,6 @@ impl DetectionPipeline {
         .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         if static_result.is_blacklisted {
-            // Blacklist always wins. Never treat as FP due to signature.
             return Ok(ScanResult {
                 file_path: file_path.to_string(),
                 file_hash: metadata.sha256_hash,
@@ -888,9 +851,6 @@ impl DetectionPipeline {
             .await
             .unwrap_or(None);
 
-            // Signature-aware behavior threshold: trusted-signed binaries (Microsoft, Google, etc.)
-            // legitimately use crypto, file enumeration, and network APIs - don't flag them
-            // unless behavior is extreme. Unsigned files keep the stricter threshold.
             let behavior_threshold =
                 if signature_info.is_valid && signature_info.is_trusted_publisher {
                     0.90
@@ -937,17 +897,10 @@ impl DetectionPipeline {
             });
         }
 
-        // Full scan path for higher-risk files
-        // Run ML, reputation, novelty, and behavior analysis concurrently.
-        // All four tasks run truly in parallel.
-
         let file_content_for_ml = file_content.clone();
         let ml_file_size = metadata.file_size;
-        // Clone the Arc so the spawn_blocking closure can own it.
         let onnx_clf = ONNX_CLASSIFIER.get().and_then(|opt| opt.clone());
         let ml_task = tokio::task::spawn_blocking(move || {
-            // Skip for large files: EMBER extraction over 20MB
-            // is slow and a useless most of the time  :l
             if ml_file_size > 20 * 1024 * 1024 {
                 return None;
             }
@@ -976,8 +929,6 @@ impl DetectionPipeline {
         let fs = metadata.file_size;
         let sc = static_result.suspicious_characteristics.clone();
         let behavior_task = tokio::task::spawn_blocking(move || {
-            // Skip for large files: byte-pattern scanning over 50 MB+
-            // iterates gigabytes of data and takes minutes to complete.
             if fs > 20 * 1024 * 1024 {
                 return None;
             }
@@ -1005,7 +956,7 @@ impl DetectionPipeline {
             async { behavior_task.await.unwrap_or(None) },
         );
 
-        // Stage 7: CPU/Memory Emulation (for packed PE files)
+        // Stage 7: Emulation
         #[cfg(feature = "emulation")]
         let emulation_summary = Self::run_emulation_if_needed(
             &file_content,
@@ -1125,7 +1076,6 @@ impl DetectionPipeline {
                 if let Some(ref family) = ml.malware_family {
                     return Some(format!("ML:{}", family));
                 }
-                // Generic ML detection
                 let confidence_pct = (ml.confidence * 100.0) as u32;
                 return Some(format!("ML.Generic ({}% confidence)", confidence_pct));
             }
@@ -1153,7 +1103,6 @@ impl DetectionPipeline {
         file_type: &str,
         packer_flags: &[String],
     ) -> Option<EmulationSummary> {
-        // Only emulate PE files that appear packed
         let is_pe =
             file_type.contains("PE") || file_type.contains("exe") || file_type.contains("dll");
         let is_packed = !packer_flags.is_empty();
@@ -1226,8 +1175,6 @@ impl DetectionPipeline {
             return (Verdict::Malware, 0.99, "HIGH".to_string());
         }
 
-        // Defense-in-depth: handle blacklisted/whitelisted files even though
-        // the scan pipeline also checks these before calling determine_verdict.
         if static_result.is_blacklisted {
             return (Verdict::Malware, 0.95, "HIGH".to_string());
         }
@@ -1243,7 +1190,6 @@ impl DetectionPipeline {
         let mut malware_score = 0.0_f64;
         let mut confidence_factors: Vec<(&str, f64)> = Vec::new();
 
-        // TRUST FACTORS (reduce malware score for legitimate software)
         // Factor 1: Digital signature from trusted publisher (STRONG trust signal)
         if signature_info.is_valid && signature_info.is_trusted_publisher {
             malware_score -= 0.5;
@@ -1281,16 +1227,12 @@ impl DetectionPipeline {
             );
         }
 
-        // THREAT FACTORS (increase malware score for suspicious indicators)
         // Factor 1: YARA signature matches (most reliable detection)
         if !static_result.yara_matches.is_empty() {
             let mut yara_score = 0.0_f64;
             let mut has_critical = false;
             let mut has_high = false;
 
-            // Files in trusted installation paths (Program Files, etc.) get reduced
-            // YARA weights even if signature verification failed, since legitimate
-            // software in these paths commonly contains strings that trigger generic rules.
             let is_trusted_path_file = is_trusted_publisher_path(file_path);
 
             for yara_match in &static_result.yara_matches {
@@ -1336,10 +1278,6 @@ impl DetectionPipeline {
             malware_score += capped_yara;
             confidence_factors.push(("yara_matches", capped_yara));
 
-            // Only instant-malware for critical/high YARA on files that are BOTH unsigned
-            // AND not in a trusted installation path. Files in Program Files, etc. with
-            // common strings (e.g. "(admin)", pipe names) can trigger FPs on rules like
-            // CobaltStrike that match generic patterns found in legitimate software.
             let in_trusted_path = is_trusted_publisher_path(file_path);
 
             if has_critical && !signature_info.is_valid && !in_trusted_path {

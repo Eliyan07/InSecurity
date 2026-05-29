@@ -24,28 +24,14 @@ use crate::database::models::Verdict as DbVerdict;
 use crate::database::queries::DatabaseQueries;
 use chrono::Utc;
 
-// ── Notification rate-limiter ──────────────────────────────────────────
-// Prevents toast-notification spam when many threats arrive in a burst
-// (e.g. extracting an archive containing several malicious files).
-//
-// Rules:
-//  • Same threat identity (normalized path + hash when available) → suppressed
-//    for NOTIFICATION_DEDUP_SECS seconds
-//  • Global cap of MAX_NOTIFICATIONS_PER_WINDOW in a sliding window
-//  • When the cap is hit the extras are counted and a single
-//    "N more threats detected" summary is sent when the window expires.
 const NOTIFICATION_DEDUP_SECS: u64 = 60;
 const MAX_NOTIFICATIONS_PER_WINDOW: usize = 5;
 const NOTIFICATION_WINDOW_SECS: u64 = 30;
 
 struct NotificationLimiter {
-    /// notification identity → last-notification Instant
     recent: std::collections::HashMap<String, Instant>,
-    /// timestamps of notifications sent inside the current window
     window_timestamps: Vec<Instant>,
-    /// count of suppressed notifications since last summary
     suppressed_count: u32,
-    /// when we last sent a "…more threats" summary
     last_summary: Option<Instant>,
 }
 
@@ -59,11 +45,9 @@ impl NotificationLimiter {
         }
     }
 
-    /// Returns `true` if this notification should be shown.
     fn should_notify(&mut self, key: &str) -> bool {
         let now = Instant::now();
 
-        // --- per-file dedup ---
         if let Some(last) = self.recent.get(key) {
             if now.duration_since(*last) < Duration::from_secs(NOTIFICATION_DEDUP_SECS) {
                 log::debug!("Notification suppressed (dedup) for: {}", key);
@@ -72,7 +56,6 @@ impl NotificationLimiter {
             }
         }
 
-        // --- sliding-window rate limit ---
         self.window_timestamps
             .retain(|t| now.duration_since(*t) < Duration::from_secs(NOTIFICATION_WINDOW_SECS));
 
@@ -82,7 +65,6 @@ impl NotificationLimiter {
             return false;
         }
 
-        // --- housekeep old dedup entries every ~60 s ---
         if self.recent.len() > 200 {
             let cutoff = now - Duration::from_secs(NOTIFICATION_DEDUP_SECS);
             self.recent.retain(|_, v| *v > cutoff);
@@ -93,15 +75,12 @@ impl NotificationLimiter {
         true
     }
 
-    /// If notifications were suppressed, returns the count so the caller
-    /// can fire a single "N more threats" summary toast.
     fn take_suppressed(&mut self) -> u32 {
         let n = self.suppressed_count;
         self.suppressed_count = 0;
         n
     }
 
-    /// `true` when enough time has passed to send another summary toast.
     fn should_send_summary(&mut self) -> bool {
         let now = Instant::now();
         match self.last_summary {
@@ -207,24 +186,16 @@ fn localized_suppressed_summary(count: u32) -> (String, String) {
     }
 }
 
-/// Limit concurrent realtime scan tasks to prevent resource exhaustion
-/// under rapid file change scenarios (e.g., extract archive, ransomware attack)
 static ACTIVE_SCAN_COUNT: AtomicUsize = AtomicUsize::new(0);
-const MAX_CONCURRENT_SCANS: usize = 8; // Balance between responsiveness and resource usage
+const MAX_CONCURRENT_SCANS: usize = 8;
 
-/// When true, the user has disabled real-time protection via Settings.
-/// Unlike `REALTIME_PAUSED` (which pauses during manual scans), this is a
-/// persistent user preference that suppresses all file-watcher and process-
-/// monitor scanning until re-enabled.
 static PROTECTION_DISABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Check if the user has disabled real-time protection in settings.
 pub fn is_protection_disabled() -> bool {
     PROTECTION_DISABLED.load(Ordering::SeqCst)
 }
 
-/// Set the real-time protection disabled flag (called from settings command).
 pub fn set_protection_disabled(disabled: bool) {
     PROTECTION_DISABLED.store(disabled, Ordering::SeqCst);
     log::info!(
@@ -237,11 +208,8 @@ pub fn set_protection_disabled(disabled: bool) {
     );
 }
 
-/// Global handle to the file watcher so new paths can be added at runtime
 static GLOBAL_WATCHER: OnceLock<Arc<Mutex<RecommendedWatcher>>> = OnceLock::new();
 
-/// Dynamically add a watch path to the running file watcher.
-/// Called when the user adds a new protected folder via settings.
 pub fn add_watch_path(path: &Path) -> Result<(), String> {
     let watcher_arc = GLOBAL_WATCHER
         .get()
@@ -256,8 +224,6 @@ pub fn add_watch_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Dynamically remove a watch path from the running file watcher.
-/// Called when the user removes a protected folder via settings.
 pub fn remove_watch_path(path: &Path) -> Result<(), String> {
     let watcher_arc = GLOBAL_WATCHER
         .get()
@@ -279,20 +245,15 @@ pub struct RealtimeScanEvent {
     pub result: ScanResult,
 }
 
-/// Resolve the absolute path to the app icon for use in notifications.
-/// On Windows, this sets the `appLogoOverride` in the toast notification,
-/// showing the InSecurity icon instead of the default terminal/PowerShell icon.
 fn resolve_notification_icon() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
-    // Dev mode: exe is in src-tauri/target/debug/
     let dev_icon = exe_dir.join("../../icons/icon.png");
     if dev_icon.exists() {
         return Some(dev_icon.canonicalize().ok()?.to_string_lossy().to_string());
     }
 
-    // Production: icons may be alongside the exe or in a resources subfolder
     for candidate in [
         exe_dir.join("icons/icon.png"),
         exe_dir.join("icon.png"),
@@ -306,9 +267,6 @@ fn resolve_notification_icon() -> Option<String> {
     None
 }
 
-/// Send a native OS notification when a threat is detected during real-time scanning.
-/// Shows a Windows toast notification similar to Windows Defender / other AV software.
-/// Rate-limited to avoid spamming the user when many threats arrive at once.
 fn send_threat_notification(
     app: &AppHandle,
     notification_identity: &str,
@@ -317,7 +275,6 @@ fn send_threat_notification(
 ) {
     use tauri_plugin_notification::NotificationExt;
 
-    // ── Rate-limit / dedup check ──
     let dedup_key = if notification_identity.trim().is_empty() {
         file_path
     } else {
@@ -325,7 +282,6 @@ fn send_threat_notification(
     };
     if let Ok(mut limiter) = get_notification_limiter().lock() {
         if !limiter.should_notify(dedup_key) {
-            // Fire a summary toast if enough suppressed notifications have piled up
             send_suppressed_summary(app, &mut limiter);
             return;
         }
@@ -351,12 +307,9 @@ fn send_threat_notification(
     }
 }
 
-/// If several notifications were suppressed by the rate limiter, send a
-/// single summary toast so the user still knows things are happening.
 fn send_suppressed_summary(app: &AppHandle, limiter: &mut NotificationLimiter) {
     let n = limiter.take_suppressed();
     if n == 0 || !limiter.should_send_summary() {
-        // Put the count back if we can't send yet
         if n > 0 {
             limiter.suppressed_count += n;
         }
@@ -377,8 +330,6 @@ fn send_suppressed_summary(app: &AppHandle, limiter: &mut NotificationLimiter) {
     }
 }
 
-/// Shared post-scan handler: persist verdict to DB, update cache, emit event to frontend.
-/// Used by both the file watcher and process monitor to avoid code duplication.
 fn handle_realtime_scan_result(
     result: ScanResult,
     file_path: &str,
@@ -387,9 +338,6 @@ fn handle_realtime_scan_result(
 ) {
     let verdict_str = format!("{:?}", result.verdict);
 
-    // --- Native OS notification for threats (like real AV software) ---
-    // Only notify for actual threats (Malware/Suspicious), not Unknown
-    // (Unknown includes unreadable files, files too large to scan, etc.)
     if matches!(
         result.verdict,
         crate::core::pipeline::Verdict::Malware | crate::core::pipeline::Verdict::Suspicious
@@ -439,7 +387,6 @@ fn handle_realtime_scan_result(
     }
 }
 
-/// Ransomware detection - tracks bulk file modifications in protected folders
 #[derive(Debug, Clone, Serialize)]
 pub struct RansomwareAlert {
     pub folder: String,
@@ -459,16 +406,12 @@ pub struct ProcessInfo {
     pub exe_path: String,
 }
 
-/// Global mutable state for live threshold reloading.
-/// The watcher thread reads this on every event instead of re-loading Settings.
 static RANSOMWARE_THRESHOLD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20);
 static RANSOMWARE_WINDOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(10);
 const NON_CANARY_ALERT_MIN_AVG_ENTROPY: f64 = 7.4;
 const NON_CANARY_OUTSIDE_FOLDER_MIN_WRITTEN_BYTES: u64 = 8 * 1024 * 1024;
 const NON_CANARY_INSIDE_FOLDER_MIN_WRITTEN_BYTES: u64 = 1 * 1024 * 1024;
 
-/// Adaptive per-folder threshold overrides (folder -> (threshold, expiry Instant))
-/// Set when user dismisses a false positive; expires after 1 hour.
 static ADAPTIVE_THRESHOLDS: OnceLock<Mutex<std::collections::HashMap<String, (u32, Instant)>>> =
     OnceLock::new();
 
@@ -476,7 +419,6 @@ fn get_adaptive_thresholds() -> &'static Mutex<std::collections::HashMap<String,
     ADAPTIVE_THRESHOLDS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Called from settings command when user changes thresholds at runtime.
 pub fn reload_ransomware_thresholds(threshold: u32, window_seconds: u32) {
     RANSOMWARE_THRESHOLD.store(threshold, Ordering::SeqCst);
     RANSOMWARE_WINDOW.store(window_seconds, Ordering::SeqCst);
@@ -487,11 +429,9 @@ pub fn reload_ransomware_thresholds(threshold: u32, window_seconds: u32) {
     );
 }
 
-/// Called when user dismisses a false-positive alert — temporarily raise the
-/// threshold for that folder by 50% for 1 hour.
 pub fn adapt_threshold_for_folder(folder: &str) {
     let base = RANSOMWARE_THRESHOLD.load(Ordering::SeqCst);
-    let adapted = base + base / 2; // +50%
+    let adapted = base + base / 2;
     let expiry = Instant::now() + Duration::from_secs(3600);
     if let Ok(mut map) = get_adaptive_thresholds().lock() {
         map.insert(folder.to_string(), (adapted, expiry));
@@ -503,7 +443,6 @@ pub fn adapt_threshold_for_folder(folder: &str) {
     );
 }
 
-/// Get the effective threshold for a folder (base or adapted if active).
 fn effective_threshold_for(folder: &str) -> u32 {
     let base = RANSOMWARE_THRESHOLD.load(Ordering::SeqCst);
     if let Ok(mut map) = get_adaptive_thresholds().lock() {
@@ -518,18 +457,11 @@ fn effective_threshold_for(folder: &str) -> u32 {
     base
 }
 
-/// Track file modifications per folder for ransomware detection.
-/// Uses cooldown-based suppression: after an alert fires, further alerts for
-/// the same folder are suppressed for `cooldown_seconds`. The counter keeps
-/// incrementing so the next alert fires immediately once the cooldown expires.
-///
-/// Enhanced with entropy tracking and adaptive thresholds.
 struct FolderModificationTracker {
     counts: std::collections::HashMap<String, (u32, Instant)>,
     window_seconds: u64,
     cooldown_seconds: u64,
     alert_cooldowns: std::collections::HashMap<String, Instant>,
-    /// Rolling entropy samples per folder (last N file entropies)
     recent_entropies: std::collections::HashMap<String, Vec<f64>>,
 }
 
@@ -544,22 +476,18 @@ impl FolderModificationTracker {
         }
     }
 
-    /// Update the tracker's window from the global atomic (called when settings change).
     fn sync_window(&mut self) {
         self.window_seconds = RANSOMWARE_WINDOW.load(Ordering::SeqCst) as u64;
     }
 
-    /// Record a file's entropy for a folder.
     fn record_entropy(&mut self, folder: &str, entropy: f64) {
         let entries = self.recent_entropies.entry(folder.to_string()).or_default();
         entries.push(entropy);
-        // Keep last 50 entropy samples
         if entries.len() > 50 {
             entries.drain(0..entries.len() - 50);
         }
     }
 
-    /// Get average entropy for recently modified files in a folder.
     fn average_entropy(&self, folder: &str) -> f64 {
         self.recent_entropies
             .get(folder)
@@ -573,19 +501,14 @@ impl FolderModificationTracker {
             .unwrap_or(0.0)
     }
 
-    /// Track a file modification. Returns Some(count) when an alert should fire.
-    /// Uses per-folder adaptive thresholds.
     fn track_modification(&mut self, folder: &str) -> Option<u32> {
         let now = Instant::now();
 
-        // Update count for this folder
         let current_count = match self.counts.get_mut(folder) {
             Some((count, window_start)) => {
                 if now.duration_since(*window_start) > Duration::from_secs(self.window_seconds) {
-                    // Window expired — reset
                     *count = 1;
                     *window_start = now;
-                    // Also clear entropy samples for fresh window
                     self.recent_entropies.remove(folder);
                 } else {
                     *count += 1;
@@ -603,12 +526,8 @@ impl FolderModificationTracker {
             return None;
         }
 
-        // Threshold exceeded — check entropy to reduce false positives.
-        // If average entropy is below 7.0 AND we don't have extremely high
-        // individual samples (>7.9), this is likely a benign bulk operation.
         let avg_ent = self.average_entropy(folder);
         if avg_ent < 7.0 && avg_ent > 0.0 {
-            // Low entropy — probably not ransomware (build, install, unzip)
             log::debug!(
                 "Ransomware threshold hit ({} files in {}) but avg entropy {:.2} is below 7.0 — suppressing",
                 current_count, folder, avg_ent
@@ -616,16 +535,13 @@ impl FolderModificationTracker {
             return None;
         }
 
-        // Threshold exceeded — check cooldown before alerting
         if let Some(cooldown_start) = self.alert_cooldowns.get(folder) {
             if now.duration_since(*cooldown_start) < Duration::from_secs(self.cooldown_seconds) {
-                return None; // Still in cooldown, suppress alert but keep counting
+                return None;
             }
         }
 
-        // Fire alert and start cooldown
         self.alert_cooldowns.insert(folder.to_string(), now);
-        // Reset counter so we track the next batch
         if let Some((count, window_start)) = self.counts.get_mut(folder) {
             *count = 0;
             *window_start = now;
@@ -634,7 +550,6 @@ impl FolderModificationTracker {
     }
 }
 
-/// Normalize a path for comparison: unify slashes and strip trailing separators.
 fn normalize_path_for_comparison(path: &str) -> String {
     path.replace('/', "\\")
         .trim_end_matches('\\')
@@ -659,8 +574,6 @@ fn threat_notification_identity(file_path: &str, file_hash: &str) -> String {
     }
 }
 
-/// Check if a path is within a protected folder.
-/// Uses normalized path comparison to handle mixed slashes and trailing separators.
 fn is_in_protected_folder(path: &str) -> Option<String> {
     let cfg = crate::config::Settings::load();
     if !cfg.ransomware_protection {
@@ -670,8 +583,6 @@ fn is_in_protected_folder(path: &str) -> Option<String> {
     let path_norm = normalize_path_for_comparison(path);
     for folder in &cfg.protected_folders {
         let folder_norm = normalize_path_for_comparison(folder);
-        // Ensure match is at a directory boundary, not a partial name
-        // e.g. "C:\Users\Doc" must not match "C:\Users\Documents\file.txt"
         if path_is_within_folder(&path_norm, &folder_norm) {
             return Some(folder.clone());
         }
@@ -679,9 +590,6 @@ fn is_in_protected_folder(path: &str) -> Option<String> {
     None
 }
 
-// ── Shannon entropy ────────────────────────────────────────────────────
-/// Compute the Shannon entropy (0.0–8.0 for bytes) of the given data.
-/// Values >7.0 are typical for encrypted/compressed content.
 fn shannon_entropy(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
@@ -701,8 +609,6 @@ fn shannon_entropy(data: &[u8]) -> f64 {
     entropy
 }
 
-/// Compute the entropy of a file by reading its last 8KB.
-/// Returns 0.0 on read failure.
 fn file_entropy(path: &str) -> f64 {
     use std::io::{Read, Seek, SeekFrom};
     const SAMPLE_SIZE: u64 = 8192;
@@ -714,7 +620,6 @@ fn file_entropy(path: &str) -> f64 {
     if file_len == 0 {
         return 0.0;
     }
-    // Read from near the end of the file (encrypted data is there)
     let offset = if file_len > SAMPLE_SIZE {
         file_len - SAMPLE_SIZE
     } else {
@@ -725,7 +630,6 @@ fn file_entropy(path: &str) -> f64 {
     }
     let mut buf = vec![0u8; SAMPLE_SIZE.min(file_len) as usize];
     if f.read_exact(&mut buf).is_err() {
-        // Try reading however much is available
         let _ = f.seek(SeekFrom::Start(offset));
         buf.clear();
         let _ = f.read_to_end(&mut buf);
@@ -733,7 +637,6 @@ fn file_entropy(path: &str) -> f64 {
     shannon_entropy(&buf)
 }
 
-/// Check if a file has a common document extension (ransomware targets).
 #[allow(dead_code)]
 fn is_document_extension(path: &str) -> bool {
     let lower = path.to_lowercase();
@@ -745,10 +648,6 @@ fn is_document_extension(path: &str) -> bool {
     DOC_EXTS.iter().any(|ext| lower.ends_with(ext))
 }
 
-// ── Developer tool detection ───────────────────────────────────────────
-
-/// Developer tool process names that commonly perform bulk file operations.
-/// Used alongside is_trusted_publisher_path() to suppress false positives.
 const KNOWN_DEV_TOOL_PROCESSES: &[&str] = &[
     "git.exe",
     "node.exe",
@@ -772,8 +671,6 @@ const KNOWN_DEV_TOOL_PROCESSES: &[&str] = &[
     "claude.exe",
 ];
 
-/// Additional trusted paths specific to developer toolchains.
-/// These are standard install locations that is_trusted_publisher_path() doesn't cover.
 const DEV_TOOLCHAIN_PATHS: &[&str] = &[
     "\\.cargo\\",
     "\\.rustup\\",
@@ -783,7 +680,7 @@ const DEV_TOOLCHAIN_PATHS: &[&str] = &[
     "\\.goenv\\",
     "\\scoop\\",
     "\\chocolatey\\",
-    "\\appdata\\local\\programs\\", // Electron app user-install location (VS Code, Cursor, etc.)
+    "\\appdata\\local\\programs\\",
 ];
 
 const USER_WRITABLE_SUSPECT_PATH_MARKERS: &[&str] = &[
@@ -795,9 +692,6 @@ const USER_WRITABLE_SUSPECT_PATH_MARKERS: &[&str] = &[
     "\\tmp\\",
 ];
 
-/// Check if a process is a known developer tool running from a trusted install path.
-/// Reuses is_trusted_publisher_path() from utils.rs for general path validation,
-/// plus dev toolchain paths (e.g. .cargo, .rustup) to prevent spoofing.
 fn is_known_dev_tool(proc: &ProcessInfo) -> bool {
     let name_lower = proc.name.to_lowercase();
     if !KNOWN_DEV_TOOL_PROCESSES
@@ -806,11 +700,9 @@ fn is_known_dev_tool(proc: &ProcessInfo) -> bool {
     {
         return false;
     }
-    // Check standard install paths (Program Files, AppData, etc.)
     if crate::core::utils::is_trusted_publisher_path(&proc.exe_path) {
         return true;
     }
-    // Check dev toolchain paths (.cargo, .rustup, etc.)
     let path_lower = proc.exe_path.to_lowercase();
     DEV_TOOLCHAIN_PATHS.iter().any(|&p| path_lower.contains(p))
 }
@@ -880,11 +772,6 @@ fn should_emit_non_canary_ransomware_alert(
         && !suspects.is_empty()
 }
 
-// ── Process identification & termination ───────────────────────────────
-
-/// Identify processes that may be responsible for rapid file modifications
-/// in a protected folder. Uses sysinfo to snap current processes and
-/// filters by executable paths that are NOT system paths.
 fn identify_modifying_processes(folder: &str) -> Vec<ProcessInfo> {
     let mut sys = System::new();
     sys.refresh_processes_specifics(
@@ -898,7 +785,6 @@ fn identify_modifying_processes(folder: &str) -> Vec<ProcessInfo> {
     let mut suspects: Vec<ProcessInfo> = Vec::new();
 
     for (pid, process) in sys.processes() {
-        // Ignore PID 0 / 4 (System)
         let pid_u32 = pid.as_u32();
         if pid_u32 <= 4 {
             continue;
@@ -912,7 +798,6 @@ fn identify_modifying_processes(folder: &str) -> Vec<ProcessInfo> {
             None => continue,
         };
 
-        // Skip system / known-safe processes
         if crate::core::utils::is_system_path(&exe_path) {
             continue;
         }
@@ -930,7 +815,6 @@ fn identify_modifying_processes(folder: &str) -> Vec<ProcessInfo> {
         });
     }
 
-    // Sort: processes with exe outside the protected folder first.
     suspects.sort_by_key(|p| {
         let norm = normalize_path_for_comparison(&p.exe_path);
         if path_is_within_folder(&norm, &folder_norm) {
@@ -940,15 +824,11 @@ fn identify_modifying_processes(folder: &str) -> Vec<ProcessInfo> {
         }
     });
 
-    // Limit to top 10 suspects
     suspects.truncate(10);
     suspects
 }
 
-/// Terminate a process by PID using the Windows API.
-/// Returns the process name on success.
 pub fn terminate_process(pid: u32) -> Result<String, String> {
-    // First look up the process name via sysinfo
     let mut sys = System::new();
     sys.refresh_processes_specifics(
         sysinfo::ProcessesToUpdate::All,
@@ -1000,11 +880,9 @@ pub fn terminate_process(pid: u32) -> Result<String, String> {
     }
 }
 
-/// Attempt to kill a list of suspected processes. Returns names of successfully killed processes.
 fn auto_kill_suspects(suspects: &[ProcessInfo]) -> Vec<String> {
     let mut killed = Vec::new();
     for proc in suspects {
-        // Safety: never kill explorer.exe, svchost, our own process
         let name_lower = proc.name.to_lowercase();
         if name_lower == "explorer.exe"
             || name_lower == "svchost.exe"
@@ -1022,11 +900,9 @@ fn auto_kill_suspects(suspects: &[ProcessInfo]) -> Vec<String> {
             );
             continue;
         }
-        // Don't kill ourselves
         if proc.pid == std::process::id() {
             continue;
         }
-        // Never kill known developer tools (git, node, code, etc.)
         if is_known_dev_tool(proc) {
             log::debug!(
                 "Skipping known developer tool: {} (PID {})",
@@ -1056,21 +932,14 @@ fn auto_kill_suspects(suspects: &[ProcessInfo]) -> Vec<String> {
     killed
 }
 
-// ── Canary / honeypot files ────────────────────────────────────────────
-
-/// Magic marker bytes written at the start of canary files so we can detect tampering.
 const CANARY_MAGIC: &[u8; 16] = b"INSEC_CANARY_V1\0";
 
-/// Filenames used for canary files — mimic common lock/temp files that ransomware
-/// will encrypt but users won't interact with.
 const CANARY_NAMES: &[&str] = &[
     ".~lock.budget_2026.xlsx#",
     ".~$important_notes.docx",
     "._backup_manifest.dat",
 ];
 
-/// Deploy canary (honeypot) files in a protected folder.
-/// Returns the list of created canary file paths.
 pub fn deploy_canary_files_for_folder(folder: &str) -> Result<Vec<String>, String> {
     let folder_path = std::path::Path::new(folder);
     if !folder_path.exists() || !folder_path.is_dir() {
@@ -1081,18 +950,14 @@ pub fn deploy_canary_files_for_folder(folder: &str) -> Result<Vec<String>, Strin
     for name in CANARY_NAMES {
         let canary_path = folder_path.join(name);
         if canary_path.exists() {
-            // Already exists — verify it's still intact
             if verify_canary_file(canary_path.to_str().unwrap_or("")) {
                 created.push(canary_path.to_string_lossy().to_string());
                 continue;
             }
-            // Tampered — recreate
         }
 
-        // Create canary file: magic header + low-entropy padding that looks like a document
         let mut content = Vec::with_capacity(1024);
         content.extend_from_slice(CANARY_MAGIC);
-        // Add some realistic-looking but identifiable content
         let padding =
             b"This document contains quarterly financial projections and budget allocations. \
             Please do not modify or delete this file. Last updated: 2026-01-15. \
@@ -1105,10 +970,8 @@ pub fn deploy_canary_files_for_folder(folder: &str) -> Result<Vec<String>, Strin
 
         match std::fs::write(&canary_path, &content) {
             Ok(_) => {
-                // Try to set hidden attribute on Windows
                 #[cfg(target_os = "windows")]
                 {
-                    // Set FILE_ATTRIBUTE_HIDDEN via `attrib` command (simple approach)
                     let _ = std::process::Command::new("attrib")
                         .args(["+H", "+S", canary_path.to_str().unwrap_or("")])
                         .output();
@@ -1122,7 +985,6 @@ pub fn deploy_canary_files_for_folder(folder: &str) -> Result<Vec<String>, Strin
         }
     }
 
-    // Persist canary paths to settings
     if !created.is_empty() {
         let mut cfg = crate::config::Settings::load();
         cfg.canary_files.insert(folder.to_string(), created.clone());
@@ -1132,8 +994,6 @@ pub fn deploy_canary_files_for_folder(folder: &str) -> Result<Vec<String>, Strin
     Ok(created)
 }
 
-/// Verify that a canary file's magic header is intact.
-/// Returns false if the file is missing, unreadable, or the header was changed.
 pub fn verify_canary_file(path: &str) -> bool {
     let Ok(content) = std::fs::read(path) else {
         return false;
@@ -1144,7 +1004,6 @@ pub fn verify_canary_file(path: &str) -> bool {
     &content[..CANARY_MAGIC.len()] == CANARY_MAGIC
 }
 
-/// Check if a path is a known canary file.
 fn is_canary_file(path: &str) -> bool {
     let cfg = crate::config::Settings::load();
     let path_norm = normalize_path_for_comparison(path);
@@ -1158,7 +1017,6 @@ fn is_canary_file(path: &str) -> bool {
     false
 }
 
-/// Remove canary files from a folder (called when unprotecting a folder).
 pub fn remove_canary_files_for_folder(folder: &str) {
     let mut cfg = crate::config::Settings::load();
     if let Some(canary_paths) = cfg.canary_files.remove(folder) {
@@ -1172,7 +1030,6 @@ pub fn remove_canary_files_for_folder(folder: &str) {
     }
 }
 
-/// Get canary file status for all protected folders.
 pub fn get_canary_status_all() -> Result<
     std::collections::HashMap<String, Vec<crate::commands::settings::CanaryFileStatus>>,
     String,
@@ -1205,7 +1062,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
 
     let watcher = Arc::new(Mutex::new(watcher));
 
-    // Register initial watch paths
     {
         let mut w = watcher
             .lock()
@@ -1221,21 +1077,18 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
         }
     }
 
-    // Store in global so add_watch_path() can access it later
     let _ = GLOBAL_WATCHER.set(Arc::clone(&watcher));
 
     std::thread::spawn(move || {
-        let _watcher = watcher; // keep alive
+        let _watcher = watcher;
 
         let cache = Arc::clone(&crate::CACHE_MANAGER);
 
-        // debouncing state: map of canonical path string -> last event timestamp
         let mut pending_scans: std::collections::HashMap<String, Instant> =
             std::collections::HashMap::new();
         const DEBOUNCE_MS: u64 = 500;
         let mut last_cleanup = Instant::now();
 
-        // Ransomware detection: track bulk modifications using configurable thresholds
         let cfg = crate::config::Settings::load();
         RANSOMWARE_THRESHOLD.store(cfg.ransomware_threshold, Ordering::SeqCst);
         RANSOMWARE_WINDOW.store(cfg.ransomware_window_seconds, Ordering::SeqCst);
@@ -1266,13 +1119,9 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         None => continue,
                                     };
 
-                                    // Ransomware detection: check if in protected folder
                                     if let Some(protected_folder) =
                                         is_in_protected_folder(&path_str)
                                     {
-                                        // ── Canary file tripwire ──
-                                        // If a canary file was modified, this is near-certain ransomware.
-                                        // Fire immediately with no threshold or cooldown.
                                         if is_canary_file(&path_str)
                                             && !verify_canary_file(&path_str)
                                         {
@@ -1304,7 +1153,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
 
                                             let _ = app.emit("ransomware_alert", &alert);
 
-                                            // Always send native notification for canary tripwire (bypass rate limit)
                                             {
                                                 use tauri_plugin_notification::NotificationExt;
                                                 let body = format!(
@@ -1337,20 +1185,16 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                     protected_folder
                                                 )),
                                             );
-                                            continue; // Skip normal scan for canary files
+                                            continue;
                                         }
 
-                                        // ── Normal bulk-modification tracking ──
-                                        // Sync window from global atomics (in case settings changed)
                                         ransomware_tracker.sync_window();
 
-                                        // Track file for recent modifications list
                                         recent_modified_files
                                             .entry(protected_folder.clone())
                                             .or_default()
                                             .push(path_str.clone());
 
-                                        // Keep only last 50 modified files per folder
                                         if let Some(files) =
                                             recent_modified_files.get_mut(&protected_folder)
                                         {
@@ -1359,11 +1203,9 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                             }
                                         }
 
-                                        // Record entropy of modified file
                                         let ent = file_entropy(&path_str);
                                         ransomware_tracker.record_entropy(&protected_folder, ent);
 
-                                        // Non-canary alerts must still pass the folder threshold.
                                         let alert_count = ransomware_tracker
                                             .track_modification(&protected_folder);
 
@@ -1414,10 +1256,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 continue;
                                             }
 
-                                            // Trusted-process suppression: if every suspect is a
-                                            // trusted-signed executable (PublisherAllowlist / PublisherMatch / CA)
-                                            // this is almost certainly a benign bulk operation (build, install, etc.)
-                                            // Skip canary alerts — those always fire.
                                             if !suspects.is_empty() && suspects.iter().all(|p| {
                                                 let sig = crate::core::signature::verify_signature(&p.exe_path);
                                                 matches!(
@@ -1434,10 +1272,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 continue;
                                             }
 
-                                            // Developer tool suppression: if any suspect is a known
-                                            // dev tool (git, node, code, etc.) running from a trusted
-                                            // install path, suppress the alert. Canary alerts are NOT
-                                            // affected — those always fire above this code path.
                                             if suspects.iter().any(|p| is_known_dev_tool(p)) {
                                                 log::info!(
                                                     "Ransomware alert suppressed — developer tool detected among suspects in {}",
@@ -1455,7 +1289,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 suspects.len()
                                             );
 
-                                            // Auto-block: terminate suspects if enabled
                                             let cfg_snap = crate::config::Settings::load();
                                             let killed = if cfg_snap.ransomware_auto_block {
                                                 auto_kill_suspects(&suspects)
@@ -1477,7 +1310,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 average_entropy: avg_ent,
                                             };
 
-                                            // Emit alert to frontend
                                             if let Err(e) = app.emit("ransomware_alert", &alert) {
                                                 log::warn!(
                                                     "Failed to emit ransomware alert: {}",
@@ -1485,7 +1317,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 );
                                             }
 
-                                            // Native OS notification for ransomware (rate-limited)
                                             {
                                                 let ransomware_key =
                                                     format!("ransomware::{}", protected_folder);
@@ -1529,7 +1360,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 }
                                             }
 
-                                            // Log to audit journal
                                             crate::core::log_audit_event(
                                                 crate::core::AuditEventType::ThreatDetected,
                                                 &format!("Possible ransomware-like behavior detected: {} bulk modifications in {} (entropy: {:.2}, killed: {})",
@@ -1541,15 +1371,12 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         }
                                     }
 
-                                    // Skip file scanning if protection is disabled by user or paused for manual scan
-                                    // (Ransomware tracking above is gated by its own ransomware_protection setting)
                                     if is_protection_disabled()
                                         || crate::commands::scan::is_realtime_paused()
                                     {
                                         continue;
                                     }
 
-                                    // Use entry API to avoid TOCTOU race condition
                                     let now = Instant::now();
                                     let should_scan = match pending_scans.entry(path_str.clone()) {
                                         Entry::Occupied(mut e) => {
@@ -1559,7 +1386,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                                 e.insert(now);
                                                 true
                                             } else {
-                                                // Skip duplicate/bounce event
                                                 false
                                             }
                                         }
@@ -1573,8 +1399,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         continue;
                                     }
 
-                                    // Rate limiting: skip if too many concurrent scans
-                                    // This prevents resource exhaustion under rapid file changes
                                     let current_count = ACTIVE_SCAN_COUNT.load(Ordering::Relaxed);
                                     if current_count >= MAX_CONCURRENT_SCANS {
                                         log::debug!(
@@ -1585,15 +1409,12 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         continue;
                                     }
 
-                                    // Increment before spawn (approximate - race is acceptable for rate limiting)
                                     ACTIVE_SCAN_COUNT.fetch_add(1, Ordering::Relaxed);
 
-                                    // Spawn an async scan task to avoid blocking the watcher
                                     let app_clone = app.clone();
                                     let path_clone = path_str.clone();
                                     let cache_clone = Arc::clone(&cache);
                                     tauri::async_runtime::spawn(async move {
-                                        // Ensure we decrement the counter when task completes
                                         struct ScanGuard;
                                         impl Drop for ScanGuard {
                                             fn drop(&mut self) {
@@ -1602,7 +1423,6 @@ pub fn start_realtime_watcher(app: AppHandle, watch_paths: Vec<PathBuf>) -> Resu
                                         }
                                         let _guard = ScanGuard;
 
-                                        // Double-check pause/disabled state in case it changed between event receive and spawn
                                         if is_protection_disabled()
                                             || crate::commands::scan::is_realtime_paused()
                                         {
@@ -1700,17 +1520,14 @@ pub fn start_process_monitor(app: AppHandle) -> Result<(), String> {
     std::thread::spawn(move || {
         let cache = Arc::clone(&crate::CACHE_MANAGER);
         let mut sys = System::new();
-        // Track (PID, exe_path) pairs to detect PID reuse with different executables
         let mut known_processes: std::collections::HashMap<u32, String> =
             std::collections::HashMap::new();
         let mut scanned_paths: HashSet<String> = HashSet::new();
 
-        // Memory management: limit scanned_paths to prevent unbounded growth
         const MAX_SCANNED_PATHS: usize = 10000;
         const PATHS_CLEANUP_INTERVAL_SECS: u64 = 600;
         let mut last_paths_cleanup = Instant::now();
 
-        // Initial scan of all running processes
         sys.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::All,
             ProcessRefreshKind::new().with_exe(UpdateKind::Always),
@@ -1730,14 +1547,13 @@ pub fn start_process_monitor(app: AppHandle) -> Result<(), String> {
             known_processes.len()
         );
 
-        const POLL_INTERVAL_MS: u64 = 3000; // 3s - good balance between detection speed and CPU usage
+        const POLL_INTERVAL_MS: u64 = 3000;
         const FULL_SCAN_INTERVAL_SECS: u64 = 300;
         let mut last_full_scan = Instant::now();
 
         loop {
             std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
 
-            // Skip process scanning if protection is disabled or paused for manual scan
             if is_protection_disabled() {
                 log::trace!("Process monitor paused - protection disabled by user");
                 continue;
@@ -1783,10 +1599,9 @@ pub fn start_process_monitor(app: AppHandle) -> Result<(), String> {
                     None => continue,
                 };
 
-                // Check if this is a new process or if PID was reused with a different executable
                 let is_new = match known_processes.get(&pid_u32) {
                     None => true,
-                    Some(known_path) => known_path != &path_str, // PID reused with different exe = treat as new
+                    Some(known_path) => known_path != &path_str,
                 };
 
                 if is_new {
@@ -1816,7 +1631,6 @@ pub fn start_process_monitor(app: AppHandle) -> Result<(), String> {
                 let cache_clone = Arc::clone(&cache);
 
                 tauri::async_runtime::spawn(async move {
-                    // Check exclusions
                     if let Some(db_mutex) = crate::get_database() {
                         if let Ok(guard) = db_mutex.lock() {
                             if let Some(ref conn) = *guard {
