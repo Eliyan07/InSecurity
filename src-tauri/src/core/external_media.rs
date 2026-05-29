@@ -399,5 +399,3 @@ pub fn start_external_media_monitor(app: AppHandle) -> Result<(), String> {
         .map(|_| ())
         .map_err(|e| format!("Failed to start external media monitor: {}", e))
 }
-
-

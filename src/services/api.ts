@@ -121,6 +121,7 @@ export interface ScanStatus {
     verdict: string;
   } | null;
   scanType: string | null;
+  lastCompletedSummary?: ScanSummary | null;
   filesPerSecond: number;
 }
 

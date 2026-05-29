@@ -188,8 +188,8 @@ mod tests {
                 "medium",
                 "test",
                 options,
-        )
-        .expect("quarantine with skip should succeed");
+            )
+            .expect("quarantine with skip should succeed");
 
         assert!(result.quarantine_success);
         assert!(result.neutralization.processes_killed.is_empty());

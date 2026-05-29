@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Scanner } from './Scanner';
 import * as api from '../../services/api';
 import type { ScanStatus } from '../../services/api';
@@ -53,6 +53,11 @@ describe('Scanner', () => {
     vi.clearAllMocks();
     vi.mocked(api.getScanStatus).mockResolvedValue(baseStatus);
     vi.mocked(api.safeListen).mockResolvedValue(() => {});
+    vi.mocked(api.getLastManualScanThreats).mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it('renders scan controls', async () => {
@@ -138,6 +143,39 @@ describe('Scanner', () => {
     });
   });
 
+  it('restores the last completed external media scan when the scanner tab opens later', async () => {
+    vi.mocked(api.getScanStatus).mockResolvedValue({
+      ...baseStatus,
+      lastCompletedSummary: {
+        totalFiles: 2,
+        cleanCount: 1,
+        suspiciousCount: 0,
+        malwareCount: 1,
+        elapsedSeconds: 3,
+        scanType: 'external',
+      },
+    });
+    vi.mocked(api.getLastManualScanThreats).mockResolvedValue([
+      {
+        filePath: 'E:\\USB\\usb-dropper.exe',
+        fileHash: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+        verdict: 'Malware',
+        threatLevel: 'HIGH',
+        threatName: 'USB.Dropper',
+        confidence: 0.97,
+        detectedAt: '2026-05-29 10:00:00 UTC',
+        detectionReasons: [],
+      },
+    ]);
+
+    render(<Scanner autoQuarantine={false} />);
+
+    await waitFor(() => expect(screen.getByText('External Media Scan')).toBeInTheDocument());
+    await waitFor(() => expect(api.getLastManualScanThreats).toHaveBeenCalled());
+    expect(screen.getByText('usb-dropper.exe')).toBeInTheDocument();
+    expect(screen.getByText('USB.Dropper')).toBeInTheDocument();
+  });
+
   it('shows a whitelisted status after trusting a detected file', async () => {
     const listeners: Record<string, (event: { payload: Record<string, unknown> }) => void> = {};
     const hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -203,9 +241,9 @@ describe('Scanner', () => {
       });
     });
 
-    await waitFor(() => expect(screen.getByText('Trust & Whitelist')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText('Trust & Whitelist').length).toBeGreaterThan(0));
 
-    fireEvent.click(screen.getByText('Trust & Whitelist'));
+    fireEvent.click(screen.getAllByText('Trust & Whitelist')[0]);
 
     await waitFor(() => expect(api.ignoreThreat).toHaveBeenCalledWith(hash, 'C:\\test\\sus.exe'));
     expect(screen.getByText('Whitelisted')).toBeInTheDocument();

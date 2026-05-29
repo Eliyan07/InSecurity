@@ -91,6 +91,7 @@ static LAST_THREAT: RwLock<Option<ThreatInfo>> = RwLock::new(None);
 
 static CURRENT_SCAN_TYPE: RwLock<Option<String>> = RwLock::new(None);
 static LAST_COMPLETED_SCAN_TYPE: RwLock<Option<String>> = RwLock::new(None);
+static LAST_COMPLETED_SCAN_SUMMARY: RwLock<Option<ScanSummary>> = RwLock::new(None);
 
 static IS_MANUAL_SCAN: AtomicBool = AtomicBool::new(false);
 
@@ -142,6 +143,9 @@ fn scan_started_internal() {
     }
     if let Ok(mut threat) = LAST_THREAT.write() {
         *threat = None;
+    }
+    if let Ok(mut summary) = LAST_COMPLETED_SCAN_SUMMARY.write() {
+        *summary = None;
     }
 }
 
@@ -252,6 +256,12 @@ pub(crate) fn is_scan_in_progress_error(err: &str) -> bool {
     err == SCAN_IN_PROGRESS_ERROR
 }
 
+fn set_last_completed_scan_summary(summary: &ScanSummary) {
+    if let Ok(mut last_summary) = LAST_COMPLETED_SCAN_SUMMARY.write() {
+        *last_summary = Some(summary.clone());
+    }
+}
+
 #[tauri::command]
 pub fn get_scan_status() -> Result<ScanStatus, String> {
     let current_file = CURRENT_FILE.read().ok().and_then(|guard| guard.clone());
@@ -280,6 +290,10 @@ pub fn get_scan_status() -> Result<ScanStatus, String> {
     };
 
     let last_threat = LAST_THREAT.read().ok().and_then(|guard| guard.clone());
+    let last_completed_summary = LAST_COMPLETED_SCAN_SUMMARY
+        .read()
+        .ok()
+        .and_then(|guard| guard.clone());
 
     let scan_type = CURRENT_SCAN_TYPE
         .read()
@@ -299,6 +313,7 @@ pub fn get_scan_status() -> Result<ScanStatus, String> {
         elapsed_seconds,
         last_threat,
         scan_type,
+        last_completed_summary,
         files_per_second: if elapsed_seconds > 0 {
             files_scanned as f64 / elapsed_seconds as f64
         } else {
@@ -322,6 +337,8 @@ pub struct ScanStatus {
     pub elapsed_seconds: u32,
     pub last_threat: Option<ThreatInfo>,
     pub scan_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_completed_summary: Option<ScanSummary>,
     pub files_per_second: f64,
 }
 
@@ -744,6 +761,7 @@ pub(crate) fn start_scan_internal(
                         elapsed_seconds: 0,
                         scan_type: scan_type_clone,
                     };
+                    set_last_completed_scan_summary(&summary);
                     let _ = app.emit("scan-complete", &summary);
                     return;
                 }
@@ -766,6 +784,7 @@ pub(crate) fn start_scan_internal(
                     elapsed_seconds: 0,
                     scan_type: scan_type_clone,
                 };
+                set_last_completed_scan_summary(&summary);
                 let _ = app.emit("scan-complete", &summary);
                 return;
             }
@@ -897,6 +916,7 @@ pub(crate) fn start_scan_internal(
                 scan_type: scan_type_clone,
             };
 
+            set_last_completed_scan_summary(&summary);
             scan_stopped();
             let _ = app.emit("scan-complete", &summary);
             log::info!("Scan completed: {:?}", summary);
@@ -923,6 +943,7 @@ pub(crate) fn start_scan_internal(
                 elapsed_seconds: 0,
                 scan_type: scan_type_for_panic,
             };
+            set_last_completed_scan_summary(&summary);
             let _ = app_for_panic.emit("scan-complete", &summary);
         }
     });
@@ -957,6 +978,9 @@ pub fn force_reset_scan() -> Result<(), String> {
     scan_stopped();
     reset_counters();
     SCAN_START_TIME.store(0, Ordering::SeqCst);
+    if let Ok(mut summary) = LAST_COMPLETED_SCAN_SUMMARY.write() {
+        *summary = None;
+    }
     Ok(())
 }
 
@@ -1069,7 +1093,7 @@ pub async fn get_last_manual_scan_threats(limit: Option<u32>) -> Result<Vec<Thre
             .prepare(
                 r#"SELECT id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, source
                    FROM verdicts
-                   WHERE source = 'manual'
+                   WHERE source IN ('manual', 'external_media')
                      AND verdict != 'Clean'
                      AND scanned_at >= ?1
                    ORDER BY scanned_at DESC, id DESC
@@ -1138,7 +1162,7 @@ pub async fn export_scan_report(output_path: String) -> Result<String, String> {
             .prepare(
                 r#"SELECT id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scan_time_ms, scanned_at, source
                    FROM verdicts
-                   WHERE source = 'manual'
+                   WHERE source IN ('manual', 'external_media')
                      AND LOWER(verdict) IN ('malware', 'suspicious', 'pup')
                      AND scanned_at >= ?1
                    ORDER BY scanned_at DESC, id DESC
@@ -1236,6 +1260,9 @@ mod tests {
             *s = None;
         }
         if let Ok(mut s) = LAST_COMPLETED_SCAN_TYPE.write() {
+            *s = None;
+        }
+        if let Ok(mut s) = LAST_COMPLETED_SCAN_SUMMARY.write() {
             *s = None;
         }
     }
@@ -1453,6 +1480,28 @@ mod tests {
         assert!(!IS_MANUAL_SCAN.load(Ordering::SeqCst));
     }
 
+    #[test]
+    #[serial]
+    fn test_get_scan_status_includes_last_completed_summary() {
+        reset_all();
+        let summary = ScanSummary {
+            total_files: 3,
+            clean_count: 2,
+            suspicious_count: 0,
+            malware_count: 1,
+            elapsed_seconds: 4,
+            scan_type: "external".to_string(),
+        };
+
+        set_last_completed_scan_summary(&summary);
+
+        let status = get_scan_status().unwrap();
+        let restored = status.last_completed_summary.expect("missing summary");
+        assert_eq!(restored.scan_type, "external");
+        assert_eq!(restored.total_files, 3);
+        assert_eq!(restored.malware_count, 1);
+    }
+
     // =========================================================================
     // Serialization
     // =========================================================================
@@ -1472,6 +1521,7 @@ mod tests {
             elapsed_seconds: 5,
             last_threat: None,
             scan_type: Some("quick".to_string()),
+            last_completed_summary: None,
             files_per_second: 2.0,
         };
         let json = serde_json::to_string(&status).unwrap();

@@ -106,6 +106,13 @@ const getInProgressScanLabel = (
   }
 };
 
+const getRestorableCompletedSummary = (
+  status: ScanStatus | null | undefined,
+): ScanSummary | null => {
+  if (!status || status.isScanning) return null;
+  return status.lastCompletedSummary ?? null;
+};
+
 // Helper to map scan-result event payload to ScanResult
 const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
   const filePath = (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '';
@@ -163,7 +170,7 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   // Flag to prevent polling after force-completion
   const [forceCompleted, setForceCompleted] = useState(false);
 
-  // Scan results (threats found during manual scan - only used when autoQuarantine is OFF)
+  // Scan results shown in the Scanner tab for completed scans when auto-quarantine is OFF.
   const MAX_SCAN_THREATS = 500;
   const [scanThreats, setScanThreats] = useState<ScanResult[]>([]);
   const [threatActionLoading, setThreatActionLoading] = useState<string | null>(null);
@@ -453,6 +460,16 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
       unlisten?.();
     };
   }, [forceCompleted, hydrateThreatsForCompletedScan]);
+
+  useEffect(() => {
+    if (scanSummary) return;
+
+    const restoredSummary = getRestorableCompletedSummary(scanStatus);
+    if (!restoredSummary) return;
+
+    setScanSummary(restoredSummary);
+    void hydrateThreatsForCompletedScan(restoredSummary);
+  }, [scanStatus, scanSummary, hydrateThreatsForCompletedScan]);
 
   // Load scheduled scans
   useEffect(() => {

@@ -909,8 +909,7 @@ fn spawn_scheduled_scan_checker(app_handle: tauri::AppHandle) {
                         }
                     }
                 }
-                Ok(None) => {
-                }
+                Ok(None) => {}
                 Err(e) => {
                     log::debug!("Error checking for scheduled scans: {}", e);
                 }
