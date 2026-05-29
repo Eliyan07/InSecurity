@@ -1,6 +1,3 @@
-//! Threat Neutralization Module
-//! Handles active threat remediation: process killing, persistence cleaning, and child process termination
-
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -55,7 +52,6 @@ pub enum PersistenceType {
 pub struct ThreatNeutralizer;
 
 impl ThreatNeutralizer {
-    /// Fully neutralize a threat: kill processes, clean persistence, then allow quarantine to proceed
     pub fn neutralize(file_path: &str) -> NeutralizationResult {
         let mut result = NeutralizationResult::default();
 
@@ -286,12 +282,10 @@ impl ThreatNeutralizer {
             OpenProcess, TerminateProcess, PROCESS_TERMINATE,
         };
 
-        // Don't kill critical system processes
         if pid <= 4 {
             return Err("Cannot kill system process".to_string());
         }
 
-        // Don't kill ourselves
         if pid == std::process::id() {
             return Err("Cannot kill self".to_string());
         }
@@ -407,7 +401,6 @@ impl ThreatNeutralizer {
 
         let csv = String::from_utf8_lossy(&output.stdout);
         for line in csv.lines().skip(1) {
-            // CSV format: "TaskName","Next Run Time","Status","Logon Mode","Last Run Time","Last Result","Author","Task To Run",...
             let fields: Vec<&str> = line.split(',').map(|s| s.trim_matches('"')).collect();
 
             if fields.len() >= 8 {
@@ -415,7 +408,6 @@ impl ThreatNeutralizer {
                 let task_to_run = fields[7];
 
                 if task_to_run.to_lowercase().contains(&target_lower) {
-                    // Delete this task
                     let delete_result = Command::new("schtasks")
                         .args(["/Delete", "/TN", task_name, "/F"])
                         .output();
@@ -471,7 +463,6 @@ impl ThreatNeutralizer {
                         }
                     }
 
-                    // Also check .bat, .cmd, .vbs files that might reference the target
                     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                     if matches!(ext, "bat" | "cmd" | "vbs" | "ps1") {
                         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -495,7 +486,6 @@ impl ThreatNeutralizer {
     fn resolve_shortcut(lnk_path: &Path) -> Result<String, String> {
         use std::process::Command;
 
-        // Use PowerShell to resolve shortcut
         let ps_script = format!(
             "$sh = New-Object -ComObject WScript.Shell; $sh.CreateShortcut('{}').TargetPath",
             lnk_path.to_string_lossy().replace("'", "''")
@@ -533,7 +523,6 @@ impl ThreatNeutralizer {
 
         let services_output = String::from_utf8_lossy(&output.stdout);
 
-        // Collect all service names first, then check each one
         let service_names: Vec<String> = services_output
             .lines()
             .filter(|line| line.starts_with("SERVICE_NAME:"))

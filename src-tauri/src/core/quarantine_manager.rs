@@ -1,6 +1,3 @@
-//! Quarantine Management
-//! Handles encryption, storage, and recovery of quarantined files
-
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::Aes256Gcm;
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -17,9 +14,6 @@ use tempfile::NamedTempFile;
 
 use crate::core::threat_neutralizer::{NeutralizationResult, ThreatNeutralizer};
 
-/// Cached encryption key - avoids re-running Argon2 KDF (~500ms) on every
-/// quarantine/restore/delete operation.  Safe for the app lifetime because the
-/// key material (password, keyring entry, or generated key) doesn't change.
 static ENCRYPTION_KEY_CACHE: OnceLock<[u8; 32]> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,17 +30,14 @@ pub struct QuarantineEntry {
     pub permanently_deleted: bool,
     pub file_size: u64,
     pub file_type: String,
-    /// Details about threat neutralization performed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neutralization_result: Option<NeutralizationResult>,
 }
 
-/// Extended quarantine result that includes both the entry and neutralization details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuarantineResult {
     pub entry: QuarantineEntry,
     pub neutralization: NeutralizationResult,
-    /// Whether the file was successfully quarantined (may succeed even if neutralization had warnings)
     pub quarantine_success: bool,
 }
 

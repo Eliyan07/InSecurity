@@ -1,7 +1,6 @@
 use crate::core::quarantine_manager::{QuarantineEntry, QuarantineManager, QuarantineOptions};
 use crate::core::tamper_protection::{log_audit_event, AuditEventType};
 use crate::database::queries::DatabaseQueries;
-/// Quarantine commands
 use serde::{Deserialize, Serialize};
 
 fn normalize_path_identity(path: &str) -> String {
@@ -93,10 +92,6 @@ pub async fn quarantine_file_by_path(
         let qm = QuarantineManager::new(&get_quarantine_path());
         let reason = format!("Manual quarantine from dashboard - {}", verdict);
 
-        // FIX: Skip neutralization for manual quarantine from dashboard.
-        // Manual quarantine is user-initiated - they don't need process killing
-        // and persistence scrubbing, which adds 500ms+ of sleep plus process
-        // enumeration overhead.
         let options = QuarantineOptions::new().skip_neutralization();
 
         let entry = qm
@@ -110,10 +105,6 @@ pub async fn quarantine_file_by_path(
             )
             .map_err(|e| format!("Quarantine failed: {}", e))?;
 
-        // FIX: Get the actual DB-assigned id back instead of using the timestamp
-        // id from QuarantineEntry. The manager sets id = Utc::now().timestamp()
-        // but the DB uses INTEGER PRIMARY KEY autoincrement - these don't match,
-        // causing restore/delete-by-id to fail.
         let db_id = if let Ok(guard) = crate::DB.lock() {
             if let Some(ref conn) = *guard {
                 let record = crate::database::models::QuarantineRecord {
@@ -174,15 +165,11 @@ pub async fn quarantine_file_by_path(
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Ignore a detected threat (remove from verdicts table so it won't show in dashboard)
-/// Also adds the file hash to the whitelist to prevent future false positive detections
-/// and records the decision in user_whitelist so the user can review/undo it later.
 #[tauri::command]
 pub async fn ignore_threat(file_hash: String, file_path: Option<String>) -> Result<(), String> {
     validate_hash(&file_hash)?;
     let file_hash = file_hash.trim().to_lowercase();
 
-    // Whitelist file I/O on blocking thread
     let hash_for_wl = file_hash.clone();
     tokio::task::spawn_blocking(move || {
         if let Err(e) = crate::core::static_scanner::add_to_whitelist(&hash_for_wl) {
@@ -202,7 +189,6 @@ pub async fn ignore_threat(file_hash: String, file_path: Option<String>) -> Resu
     let requested_path = file_path.clone();
     let requested_path_norm = file_path.as_ref().map(|path| normalize_path_identity(path));
     crate::with_db_async(move |conn| {
-        // Capture file_path and verdict from verdicts table before deleting.
         let (stored_file_path, original_verdict): (Option<String>, Option<String>) =
             if let Some(ref path_norm) = requested_path_norm {
                 conn.query_row(
@@ -227,7 +213,6 @@ pub async fn ignore_threat(file_hash: String, file_path: Option<String>) -> Resu
             };
         let whitelist_path = requested_path.or(stored_file_path);
 
-        // Record in user_whitelist so user can review/undo from Settings
         let now = chrono::Utc::now().timestamp();
         let _ = conn.execute(
             "INSERT OR IGNORE INTO user_whitelist (file_hash, file_path, original_verdict, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -285,7 +270,6 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
         let path_str = canonical_path.to_string_lossy().to_lowercase();
         let canonical_path_norm = normalize_path_identity(&canonical_path.to_string_lossy());
 
-        // SECURITY: Block deletion of system files using canonicalized path
         let blocked_patterns = [
             "\\windows\\",
             "\\system32\\",
@@ -311,8 +295,6 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
             return Err("Path is not a regular file".to_string());
         }
 
-        // FIX: Verify file hash before deletion to prevent deleting the wrong file
-        // (e.g. if the path was reused by a different file since detection).
         let actual_hash = compute_sha256(&canonical_path)
             .map_err(|e| format!("Failed to hash file for verification: {}", e))?;
 
@@ -354,7 +336,6 @@ pub async fn delete_threat_file(file_path: String, file_hash: String) -> Result<
     }).await.map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Compute SHA-256 of a file for verification before destructive operations
 fn compute_sha256(path: &std::path::Path) -> Result<String, std::io::Error> {
     use sha2::{Digest, Sha256};
     use std::io::Read;
@@ -414,7 +395,6 @@ pub async fn restore_file(id: i64) -> Result<(), String> {
             }).map_err(|e| format!("Record not found: {}", e))?
         };
 
-        // SECURITY: Canonicalize path first to prevent TOCTOU and symlink attacks
         let restore_path = std::path::Path::new(&record.original_path);
         let canonical_path = if let Some(parent) = restore_path.parent() {
             if parent.exists() {
@@ -614,7 +594,6 @@ pub async fn remove_from_user_whitelist(file_hash: String) -> Result<(), String>
     validate_hash(&file_hash)?;
     let file_hash = file_hash.trim().to_lowercase();
 
-    // Remove from in-memory whitelist set
     let hash_for_wl = file_hash.clone();
     tokio::task::spawn_blocking(move || {
         crate::core::static_scanner::remove_from_whitelist(&hash_for_wl);
@@ -623,7 +602,6 @@ pub async fn remove_from_user_whitelist(file_hash: String) -> Result<(), String>
     .await
     .map_err(|e| format!("Task join error: {}", e))?;
 
-    // Invalidate cache so re-scans pick up the change
     if let Ok(mut cache_guard) = crate::CACHE_MANAGER.lock() {
         cache_guard.invalidate(&file_hash);
     }
@@ -652,7 +630,6 @@ pub async fn remove_from_user_whitelist(file_hash: String) -> Result<(), String>
 
 #[tauri::command]
 pub async fn clear_user_whitelist() -> Result<usize, String> {
-    // Get all user-whitelisted hashes from the DB
     let db_hashes: Vec<String> = crate::with_db_async(|conn| {
         let mut stmt = conn
             .prepare("SELECT file_hash FROM user_whitelist")
@@ -670,7 +647,6 @@ pub async fn clear_user_whitelist() -> Result<usize, String> {
         return Ok(0);
     }
 
-    // Clear from memory + user whitelist file on disk
     let hashes_for_clear = db_hashes.clone();
     let removed = tokio::task::spawn_blocking(move || {
         crate::core::static_scanner::clear_user_whitelist(&hashes_for_clear)
@@ -678,14 +654,12 @@ pub async fn clear_user_whitelist() -> Result<usize, String> {
     .await
     .map_err(|e| format!("Task join error: {}", e))?;
 
-    // Invalidate cache for all cleared hashes
     if let Ok(mut cache_guard) = crate::CACHE_MANAGER.lock() {
         for hash in &db_hashes {
             cache_guard.invalidate(hash);
         }
     }
 
-    // Delete all entries from DB
     crate::with_db_async(|conn| {
         conn.execute("DELETE FROM user_whitelist", [])
             .map_err(|e| format!("Failed to clear user whitelist: {}", e))?;
