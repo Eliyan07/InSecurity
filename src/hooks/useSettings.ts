@@ -5,6 +5,7 @@ const MASKED_API_KEY_VALUE = '[configured]';
 
 export interface AppSettings {
   realTimeProtection?: boolean;
+  externalMediaAutoScan?: boolean;
   autoQuarantine: boolean;
   cacheSizeMb: number;
   cacheTtlHours: number;
@@ -175,6 +176,15 @@ export function useSettings() {
     }
   }, []);
 
+  const setExternalMediaAutoScan = useCallback(async (enabled: boolean) => {
+    try {
+      await safeInvoke('set_external_media_auto_scan', { enabled });
+      setSettings(prev => prev ? { ...prev, externalMediaAutoScan: enabled } : prev);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update external media auto-scan');
+    }
+  }, []);
+
   const setMalwareBazaarApiKey = useCallback(async (key: string) => {
     try {
       const result = await safeInvoke<ApiKeySaveResult>('set_malwarebazaar_api_key', { key });
@@ -202,6 +212,7 @@ export function useSettings() {
     getSettings,
     setAutoQuarantine,
     setRealTimeProtection,
+    setExternalMediaAutoScan,
     setRansomwareProtection,
     setScanWorkerCount,
     setAutostart,

@@ -70,6 +70,8 @@ use tauri::Emitter;
 use walkdir::WalkDir;
 
 static IS_SCANNING: AtomicBool = AtomicBool::new(false);
+pub(crate) const SCAN_IN_PROGRESS_ERROR: &str =
+    "A scan is already in progress. If this seems incorrect, try resetting the scan state from Settings.";
 
 static FILES_SCANNED: AtomicU32 = AtomicU32::new(0);
 
@@ -244,6 +246,10 @@ pub fn set_total_files(total: u32) {
 
 pub fn is_scanning() -> bool {
     IS_SCANNING.load(Ordering::SeqCst)
+}
+
+pub(crate) fn is_scan_in_progress_error(err: &str) -> bool {
+    err == SCAN_IN_PROGRESS_ERROR
 }
 
 #[tauri::command]
@@ -511,17 +517,137 @@ fn collect_files(
     files
 }
 
-#[tauri::command]
-pub async fn start_scan(
+fn normalize_scan_type(scan_type: &str) -> Result<String, String> {
+    let normalized = scan_type.trim().to_lowercase();
+    match normalized.as_str() {
+        "quick" | "full" | "custom" | "external" => Ok(normalized),
+        _ => Err(format!("Unknown scan type: {}", scan_type)),
+    }
+}
+
+fn resolve_scan_paths(
+    scan_type: &str,
+    custom_path: Option<String>,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    match scan_type {
+        "quick" => Ok(get_quick_scan_paths()),
+        "full" => Ok(get_full_scan_paths()),
+        "custom" => {
+            let path = custom_path.ok_or_else(|| "Custom scan requires a path".to_string())?;
+            let custom_path = std::path::PathBuf::from(&path);
+            if !custom_path.exists() {
+                return Err(format!("Path does not exist: {}", path));
+            }
+            if !custom_path.is_dir() && !custom_path.is_file() {
+                return Err(format!("Path is not a file or directory: {}", path));
+            }
+            Ok(vec![custom_path])
+        }
+        "external" => {
+            let path =
+                custom_path.ok_or_else(|| "External scan requires a mounted path".to_string())?;
+            let external_path = std::path::PathBuf::from(&path);
+            if !external_path.exists() {
+                return Err(format!("Path does not exist: {}", path));
+            }
+            if !external_path.is_dir() {
+                return Err(format!("External scan requires a directory path: {}", path));
+            }
+            Ok(vec![external_path])
+        }
+        _ => Err(format!("Unknown scan type: {}", scan_type)),
+    }
+}
+
+fn external_scan_category_priority(path: &std::path::Path) -> u8 {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if file_name == "autorun.inf" {
+        return 0;
+    }
+
+    let executable_like = [
+        "exe",
+        "dll",
+        "sys",
+        "drv",
+        "ocx",
+        "scr",
+        "cpl",
+        "msi",
+        "msp",
+        "mst",
+        "msix",
+        "msixbundle",
+        "appx",
+        "appxbundle",
+        "msu",
+        "com",
+        "pif",
+        "jar",
+        "class",
+        "war",
+        "ear",
+        "lnk",
+        "url",
+    ];
+    if executable_like.contains(&extension.as_str())
+        || crate::core::utils::is_probable_installer_path(&path.to_string_lossy())
+    {
+        return 1;
+    }
+
+    let script_like = [
+        "bat", "cmd", "ps1", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "sct",
+        "reg", "docm", "xlsm", "pptm", "dotm", "xltm", "potm", "doc", "xls", "ppt",
+    ];
+    if script_like.contains(&extension.as_str()) {
+        return 2;
+    }
+
+    let archive_like = ["zip", "rar", "7z", "cab", "iso", "img"];
+    if archive_like.contains(&extension.as_str()) {
+        return 3;
+    }
+
+    4
+}
+
+fn sort_external_scan_files(files: &mut [String], root_path: &std::path::Path) {
+    files.sort_by_key(|file_path| {
+        let path = std::path::Path::new(file_path);
+        let parent_is_root = path
+            .parent()
+            .map(|parent| parent == root_path)
+            .unwrap_or(false);
+        let root_priority = if parent_is_root { 0 } else { 1 };
+        let category_priority = external_scan_category_priority(path);
+        let tie_breaker = file_path.to_lowercase();
+        (root_priority, category_priority, tie_breaker)
+    });
+}
+
+pub(crate) fn start_scan_internal(
     app: tauri::AppHandle,
     scan_type: String,
     custom_path: Option<String>,
 ) -> Result<(), String> {
     use crate::core::pipeline::DetectionPipeline;
 
+    let normalized_scan_type = normalize_scan_type(&scan_type)?;
+
     log::info!(
         "start_scan called: type={}, custom_path={:?}",
-        scan_type,
+        normalized_scan_type,
         custom_path
     );
 
@@ -530,49 +656,35 @@ pub async fn start_scan(
         .is_err()
     {
         log::warn!("Scan blocked: IS_SCANNING is already true (atomic check)");
-        return Err("A scan is already in progress. If this seems incorrect, try resetting the scan state from Settings.".to_string());
+        return Err(SCAN_IN_PROGRESS_ERROR.to_string());
     }
 
-    let paths: Vec<std::path::PathBuf> = match scan_type.to_lowercase().as_str() {
-        "quick" => get_quick_scan_paths(),
-        "full" => get_full_scan_paths(),
-        "custom" => {
-            if let Some(path) = custom_path {
-                let custom_path = std::path::PathBuf::from(&path);
-                if !custom_path.exists() {
-                    IS_SCANNING.store(false, Ordering::SeqCst);
-                    return Err(format!("Path does not exist: {}", path));
-                }
-                if !custom_path.is_dir() && !custom_path.is_file() {
-                    IS_SCANNING.store(false, Ordering::SeqCst);
-                    return Err(format!("Path is not a file or directory: {}", path));
-                }
-                vec![custom_path]
-            } else {
-                IS_SCANNING.store(false, Ordering::SeqCst);
-                return Err("Custom scan requires a path".to_string());
-            }
-        }
-        _ => {
+    let paths = match resolve_scan_paths(&normalized_scan_type, custom_path) {
+        Ok(paths) => paths,
+        Err(err) => {
             IS_SCANNING.store(false, Ordering::SeqCst);
-            return Err(format!("Unknown scan type: {}", scan_type));
+            return Err(err);
         }
     };
 
     if paths.is_empty() {
         IS_SCANNING.store(false, Ordering::SeqCst);
-        log::warn!("No valid scan paths found for scan type: {}", scan_type);
+        log::warn!(
+            "No valid scan paths found for scan type: {}",
+            normalized_scan_type
+        );
         return Err("No valid paths to scan".to_string());
     }
 
     scan_started_internal();
 
     if let Ok(mut st) = CURRENT_SCAN_TYPE.write() {
-        *st = Some(scan_type.clone());
+        *st = Some(normalized_scan_type.clone());
     }
 
-    let scan_type_clone = scan_type.clone();
-    let is_quick_scan = scan_type.to_lowercase() == "quick";
+    let scan_type_clone = normalized_scan_type.clone();
+    let is_quick_scan = normalized_scan_type == "quick";
+    let is_external_scan = normalized_scan_type == "external";
     let max_depth = if is_quick_scan { Some(2) } else { None };
 
     let app_for_panic = app.clone();
@@ -593,6 +705,11 @@ pub async fn start_scan(
             );
 
             let is_single_file = paths.len() == 1 && paths[0].is_file();
+            let external_root = if is_external_scan && paths.len() == 1 && paths[0].is_dir() {
+                Some(paths[0].clone())
+            } else {
+                None
+            };
 
             let files = match tauri::async_runtime::spawn_blocking(move || {
                 if is_single_file {
@@ -602,7 +719,11 @@ pub async fn start_scan(
                         Vec::new()
                     }
                 } else {
-                    collect_files(&paths, max_depth, max_file_size)
+                    let mut files = collect_files(&paths, max_depth, max_file_size);
+                    if let Some(root_path) = external_root.as_deref() {
+                        sort_external_scan_files(&mut files, root_path);
+                    }
+                    files
                 }
             })
             .await
@@ -668,6 +789,11 @@ pub async fn start_scan(
             log::info!("Scan concurrency: {} workers", concurrency);
 
             let app_ref = &app;
+            let verdict_source = if is_external_scan {
+                "external_media"
+            } else {
+                "manual"
+            };
 
             stream::iter(files)
                 .take_while(|_| {
@@ -684,7 +810,7 @@ pub async fn start_scan(
                             if is_quick_scan {
                                 DetectionPipeline::scan_file_quick(&file_path).await
                             } else {
-                                DetectionPipeline::scan_file_with_options(&file_path, true).await
+                                DetectionPipeline::scan_file_with_options(&file_path, false).await
                             }
                         })
                         .await;
@@ -708,7 +834,7 @@ pub async fn start_scan(
                                     threat_name: result.threat_name.clone(),
                                     scan_time_ms: result.scan_time_ms,
                                     scanned_at: Utc::now().timestamp(),
-                                    source: "manual".to_string(),
+                                    source: verdict_source.to_string(),
                                 };
                                 crate::database::batcher::enqueue_verdict(rec);
 
@@ -802,6 +928,16 @@ pub async fn start_scan(
     });
 
     Ok(())
+}
+
+/// Start a folder/directory scan
+#[tauri::command]
+pub async fn start_scan(
+    app: tauri::AppHandle,
+    scan_type: String,
+    custom_path: Option<String>,
+) -> Result<(), String> {
+    start_scan_internal(app, scan_type, custom_path)
 }
 
 #[tauri::command]
@@ -1102,6 +1238,68 @@ mod tests {
         if let Ok(mut s) = LAST_COMPLETED_SCAN_TYPE.write() {
             *s = None;
         }
+    }
+
+    // =========================================================================
+    // Scan type helpers
+    // =========================================================================
+
+    #[test]
+    fn test_normalize_scan_type_accepts_external() {
+        assert_eq!(normalize_scan_type("EXTERNAL").unwrap(), "external");
+    }
+
+    #[test]
+    fn test_resolve_external_scan_path_requires_directory() {
+        let dir = tempdir().unwrap();
+        let resolved =
+            resolve_scan_paths("external", Some(dir.path().to_string_lossy().to_string())).unwrap();
+
+        assert_eq!(resolved, vec![dir.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn test_sort_external_scan_files_prioritizes_root_and_risky_extensions() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        let mut files = vec![
+            root.join("docs")
+                .join("note.txt")
+                .to_string_lossy()
+                .to_string(),
+            root.join("archive.zip").to_string_lossy().to_string(),
+            root.join("autorun.inf").to_string_lossy().to_string(),
+            root.join("setup.msi").to_string_lossy().to_string(),
+            root.join("docs")
+                .join("script.ps1")
+                .to_string_lossy()
+                .to_string(),
+        ];
+
+        sort_external_scan_files(&mut files, root);
+
+        let ordered_names: Vec<String> = files
+            .iter()
+            .map(|path| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+
+        assert_eq!(
+            ordered_names,
+            vec![
+                "autorun.inf",
+                "setup.msi",
+                "archive.zip",
+                "script.ps1",
+                "note.txt"
+            ]
+        );
     }
 
     // =========================================================================

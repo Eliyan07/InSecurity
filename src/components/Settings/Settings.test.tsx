@@ -35,8 +35,10 @@ const defaultProps: SettingsProps = {
   ransomwareWindowSeconds: 10,
   scanWorkerCount: 4,
   autostart: true,
+  externalMediaAutoScan: true,
   onAutoQuarantineChange: vi.fn(),
   onRealTimeChange: vi.fn(),
+  onExternalMediaAutoScanChange: vi.fn(),
   onRansomwareProtectionChange: vi.fn(),
   onRansomwareAutoBlockChange: vi.fn(),
   onRansomwareThresholdsChange: vi.fn(),
@@ -89,6 +91,20 @@ describe('Settings', () => {
     // Find the auto quarantine switch
     const switches = screen.getAllByRole('checkbox');
     expect(switches.length).toBeGreaterThan(0);
+  });
+
+  it('renders and updates the external media auto-scan toggle', () => {
+    render(<Settings {...defaultProps} />);
+
+    const toggle = screen.getByRole('checkbox', {
+      name: 'Scan External Media on Connection',
+    });
+
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+
+    expect(defaultProps.onExternalMediaAutoScanChange).toHaveBeenCalledWith(false);
   });
 
   it('renders app update section', () => {

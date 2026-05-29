@@ -27,6 +27,7 @@ type SettingsTab = 'protection' | 'performance' | 'exclusions' | 'audit' | 'whit
 export interface SettingsProps {
   autoQuarantine: boolean;
   realTimeProtection?: boolean;
+  externalMediaAutoScan?: boolean;
   ransomwareProtection?: boolean;
   ransomwareAutoBlock?: boolean;
   ransomwareThreshold?: number;
@@ -35,6 +36,7 @@ export interface SettingsProps {
   autostart?: boolean;
   onAutoQuarantineChange: (value: boolean) => void;
   onRealTimeChange?: (value: boolean) => void;
+  onExternalMediaAutoScanChange?: (value: boolean) => void;
   onRansomwareProtectionChange?: (value: boolean) => void;
   onRansomwareAutoBlockChange?: (value: boolean) => void;
   onRansomwareThresholdsChange?: (threshold: number, windowSeconds: number) => void;
@@ -62,6 +64,7 @@ export interface SettingsProps {
 export const Settings: React.FC<SettingsProps> = ({
   autoQuarantine,
   realTimeProtection,
+  externalMediaAutoScan = true,
   ransomwareProtection = true,
   ransomwareAutoBlock = true,
   ransomwareThreshold = 20,
@@ -70,6 +73,7 @@ export const Settings: React.FC<SettingsProps> = ({
   autostart = true,
   onAutoQuarantineChange,
   onRealTimeChange,
+  onExternalMediaAutoScanChange,
   onRansomwareProtectionChange,
   onRansomwareAutoBlockChange,
   onRansomwareThresholdsChange,
@@ -492,6 +496,18 @@ export const Settings: React.FC<SettingsProps> = ({
               <span>{t('settings.launchAtStartup')}</span>
             </label>
             <p className="help-text">{t('settings.launchAtStartupHelp')}</p>
+
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={externalMediaAutoScan}
+                onChange={(e) =>
+                  onExternalMediaAutoScanChange && onExternalMediaAutoScanChange(e.target.checked)
+                }
+              />
+              <span>{t('settings.externalMediaAutoScan')}</span>
+            </label>
+            <p className="help-text">{t('settings.externalMediaAutoScanHelp')}</p>
           </div>
 
           <div className="settings-group">

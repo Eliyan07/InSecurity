@@ -93,6 +93,51 @@ describe('Scanner', () => {
     expect(screen.getByText(/Custom Scan/)).toBeInTheDocument();
   });
 
+  it('renders external media scan labels during progress and completion', async () => {
+    const listeners: Record<string, (event: { payload: any }) => void> = {};
+    let currentStatus: ScanStatus = {
+      ...baseStatus,
+      isScanning: true,
+      totalFiles: 0,
+      scanType: 'external',
+    };
+    vi.mocked(api.getScanStatus).mockImplementation(async () => currentStatus);
+    vi.mocked(api.safeListen).mockImplementation(async (eventName: string, callback: any) => {
+      listeners[eventName] = callback;
+      return () => {
+        delete listeners[eventName];
+      };
+    });
+
+    render(<Scanner autoQuarantine={true} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Preparing External Media Scan...')).toBeInTheDocument();
+    });
+
+    currentStatus = {
+      ...baseStatus,
+      scanType: 'external',
+    };
+
+    await act(async () => {
+      listeners['scan-complete']({
+        payload: {
+          totalFiles: 5,
+          cleanCount: 5,
+          suspiciousCount: 0,
+          malwareCount: 0,
+          elapsedSeconds: 2,
+          scanType: 'external',
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('External Media Scan')).toBeInTheDocument();
+    });
+  });
+
   it('shows a whitelisted status after trusting a detected file', async () => {
     const listeners: Record<string, (event: { payload: Record<string, unknown> }) => void> = {};
     const hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';

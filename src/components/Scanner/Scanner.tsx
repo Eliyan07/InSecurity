@@ -52,6 +52,60 @@ const getFolderHint = (filePath: string): string => {
   return directories.slice(-2).join('\\');
 };
 
+const getScanTypeLabel = (
+  scanType: string | null | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string => {
+  switch (scanType) {
+    case 'quick':
+      return t('scanner.quickScan');
+    case 'full':
+      return t('scanner.fullScan');
+    case 'custom':
+      return t('scanner.customScan');
+    case 'external':
+      return t('scanner.externalScan');
+    default:
+      return scanType || t('scanner.scan');
+  }
+};
+
+const getPreparingScanLabel = (
+  scanType: string | null | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string => {
+  switch (scanType) {
+    case 'quick':
+      return t('scanner.preparingQuick');
+    case 'full':
+      return t('scanner.preparingFull');
+    case 'custom':
+      return t('scanner.preparingCustom');
+    case 'external':
+      return t('scanner.preparingExternal');
+    default:
+      return t('scanner.preparingScan');
+  }
+};
+
+const getInProgressScanLabel = (
+  scanType: string | null | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string => {
+  switch (scanType) {
+    case 'quick':
+      return t('scanner.quickInProgress');
+    case 'full':
+      return t('scanner.fullInProgress');
+    case 'custom':
+      return t('scanner.customInProgress');
+    case 'external':
+      return t('scanner.externalInProgress');
+    default:
+      return t('scanner.scanning');
+  }
+};
+
 // Helper to map scan-result event payload to ScanResult
 const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
   const filePath = (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '';
@@ -722,19 +776,9 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
               <span>
                 {scanStatus.totalFiles === 0 ? (
                   // File collection phase - totalFiles not set yet
-                  <>
-                    {scanStatus.scanType === 'quick' && t('scanner.preparingQuick')}
-                    {scanStatus.scanType === 'full' && t('scanner.preparingFull')}
-                    {scanStatus.scanType === 'custom' && t('scanner.preparingCustom')}
-                    {!scanStatus.scanType && t('scanner.preparingScan')}
-                  </>
+                  <>{getPreparingScanLabel(scanStatus.scanType, t)}</>
                 ) : (
-                  <>
-                    {scanStatus.scanType === 'quick' && t('scanner.quickInProgress')}
-                    {scanStatus.scanType === 'full' && t('scanner.fullInProgress')}
-                    {scanStatus.scanType === 'custom' && t('scanner.customInProgress')}
-                    {!scanStatus.scanType && t('scanner.scanning')}
-                  </>
+                  <>{getInProgressScanLabel(scanStatus.scanType, t)}</>
                 )}
               </span>
             </div>
@@ -853,7 +897,9 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
                 )}
                 <div>
                   <h3>{t('scanner.scanComplete')}</h3>
-                  <span className="summary-type">{t('scanner.scanType', { type: scanSummary.scanType })}</span>
+                  <span className="summary-type">
+                    {getScanTypeLabel(scanSummary.scanType, t)}
+                  </span>
                 </div>
               </div>
             </div>

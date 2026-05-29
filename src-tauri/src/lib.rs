@@ -513,6 +513,13 @@ pub fn run() {
                     Ok(_) => log::info!("Process monitor started"),
                     Err(e) => log::warn!("Failed to start process monitor: {}", e),
                 }
+
+                match crate::core::external_media::start_external_media_monitor(
+                    app.handle().clone(),
+                ) {
+                    Ok(_) => log::info!("External media monitor started"),
+                    Err(e) => log::warn!("Failed to start external media monitor: {}", e),
+                }
             }
 
             if cfg.real_time_protection {
@@ -678,6 +685,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::update_settings,
             commands::settings::set_auto_quarantine,
+            commands::settings::set_external_media_auto_scan,
             commands::settings::set_real_time_protection,
             commands::settings::reconfigure_cache,
             commands::settings::get_cache_stats,

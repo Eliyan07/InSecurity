@@ -57,7 +57,7 @@ function App() {
   const { realtimeResults, removeResult, refreshActiveThreats } = useRealtimeScan(activeNav);
   const { confirm: confirmDialog, dialogProps: appDialogProps } = useConfirmDialog();
   const { quarantinedFiles: quarantineItems, loading: quarantineLoading, listQuarantined, restoreFile: restoreItem, deleteFile: deleteItem } = useQuarantine(confirmDialog);
-  const { settings, getSettings, setRealTimeProtection, setAutoQuarantine, setRansomwareProtection, setScanWorkerCount, setAutostart, setRansomwareAutoBlock, setRansomwareThresholds, redeployCanaryFiles, setNetworkMonitoring, setAutoBlockMalware, setLanguage, setVirusTotalApiKey, setMalwareBazaarApiKey } = useSettings();
+  const { settings, getSettings, setRealTimeProtection, setExternalMediaAutoScan, setAutoQuarantine, setRansomwareProtection, setScanWorkerCount, setAutostart, setRansomwareAutoBlock, setRansomwareThresholds, redeployCanaryFiles, setNetworkMonitoring, setAutoBlockMalware, setLanguage, setVirusTotalApiKey, setMalwareBazaarApiKey } = useSettings();
   const { stats: dashboardStats, loading: dashboardLoading, refresh: refreshDashboard } = useDashboard(activeNav);
   
 
@@ -436,6 +436,7 @@ function App() {
           <Settings
             autoQuarantine={settings?.autoQuarantine ?? false}
             realTimeProtection={settings?.realTimeProtection ?? true}
+            externalMediaAutoScan={settings?.externalMediaAutoScan ?? true}
             ransomwareProtection={settings?.ransomwareProtection ?? true}
             ransomwareAutoBlock={settings?.ransomwareAutoBlock ?? true}
             ransomwareThreshold={settings?.ransomwareThreshold ?? 20}
@@ -444,6 +445,7 @@ function App() {
             autostart={settings?.autostart ?? true}
             onAutoQuarantineChange={setAutoQuarantine}
             onRealTimeChange={setRealTimeProtection}
+            onExternalMediaAutoScanChange={setExternalMediaAutoScan}
             onRansomwareProtectionChange={setRansomwareProtection}
             onRansomwareAutoBlockChange={setRansomwareAutoBlock}
             onRansomwareThresholdsChange={setRansomwareThresholds}

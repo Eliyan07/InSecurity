@@ -10,6 +10,9 @@ static CACHED_SETTINGS: RwLock<Option<Settings>> = RwLock::new(None);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub real_time_protection: bool,
+    /// Automatically scan newly connected removable media
+    #[serde(default = "default_true")]
+    pub external_media_auto_scan: bool,
     pub auto_quarantine: bool,
     pub cache_size_mb: u32,
     pub cache_ttl_hours: u32,
@@ -105,6 +108,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             real_time_protection: true,
+            external_media_auto_scan: true,
             auto_quarantine: true,
             cache_size_mb: 256,
             cache_ttl_hours: 24,
@@ -286,6 +290,11 @@ mod tests {
     }
 
     #[test]
+    fn test_settings_default_external_media_auto_scan() {
+        assert!(Settings::default().external_media_auto_scan);
+    }
+
+    #[test]
     fn test_settings_default_auto_quarantine() {
         assert!(Settings::default().auto_quarantine);
     }
@@ -328,6 +337,10 @@ mod tests {
             deserialized.real_time_protection,
             original.real_time_protection
         );
+        assert_eq!(
+            deserialized.external_media_auto_scan,
+            original.external_media_auto_scan
+        );
         assert_eq!(deserialized.auto_quarantine, original.auto_quarantine);
         assert_eq!(deserialized.cache_size_mb, original.cache_size_mb);
         assert_eq!(deserialized.cache_ttl_hours, original.cache_ttl_hours);
@@ -365,6 +378,7 @@ mod tests {
         assert!(!s.auto_quarantine);
         assert_eq!(s.cache_size_mb, 64);
         assert_eq!(s.cache_ttl_hours, 12);
+        assert!(s.external_media_auto_scan);
         // Defaults for missing fields
         assert!(s.ransomware_protection); // serde default = "default_true"
         assert!(s.ransomware_auto_block); // default_true()
@@ -403,6 +417,7 @@ mod tests {
         let s = Settings::default();
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("real_time_protection"));
+        assert!(json.contains("external_media_auto_scan"));
         assert!(json.contains("auto_quarantine"));
         assert!(json.contains("cache_size_mb"));
         assert!(json.contains("cache_ttl_hours"));
@@ -427,6 +442,7 @@ mod tests {
     fn test_settings_clone() {
         let original = Settings {
             real_time_protection: false,
+            external_media_auto_scan: false,
             auto_quarantine: false,
             cache_size_mb: 128,
             cache_ttl_hours: 6,
@@ -450,6 +466,7 @@ mod tests {
         };
         let cloned = original.clone();
         assert!(!cloned.real_time_protection);
+        assert!(!cloned.external_media_auto_scan);
         assert_eq!(cloned.protected_folders, vec!["C:\\test"]);
         assert_eq!(cloned.scan_worker_count, 2);
     }
@@ -493,6 +510,7 @@ mod tests {
         // global cache. Instead test that save() produces valid JSON.
         let s = Settings {
             real_time_protection: false,
+            external_media_auto_scan: true,
             auto_quarantine: true,
             cache_size_mb: 100,
             cache_ttl_hours: 8,
@@ -517,6 +535,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&s).unwrap();
         let reloaded: Settings = serde_json::from_str(&json).unwrap();
         assert!(!reloaded.real_time_protection);
+        assert!(reloaded.external_media_auto_scan);
         assert!(reloaded.auto_quarantine);
         assert_eq!(reloaded.cache_size_mb, 100);
         assert_eq!(reloaded.scan_worker_count, 8);

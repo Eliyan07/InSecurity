@@ -124,6 +124,33 @@ describe('useSettings', () => {
     expect(mockSafeInvoke).toHaveBeenCalledWith('set_real_time_protection', { enabled: false });
   });
 
+  it('setExternalMediaAutoScan updates settings optimistically', async () => {
+    const initialSettings = {
+      realTimeProtection: true,
+      externalMediaAutoScan: true,
+      autoQuarantine: true,
+      cacheSizeMb: 256,
+      cacheTtlHours: 24,
+    };
+
+    mockSafeInvoke.mockResolvedValueOnce(initialSettings);
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      await result.current.getSettings();
+    });
+
+    mockSafeInvoke.mockResolvedValueOnce(undefined);
+
+    await act(async () => {
+      await result.current.setExternalMediaAutoScan(false);
+    });
+
+    expect(result.current.settings?.externalMediaAutoScan).toBe(false);
+    expect(mockSafeInvoke).toHaveBeenCalledWith('set_external_media_auto_scan', { enabled: false });
+  });
+
   it('setScanWorkerCount rejects invalid values', async () => {
     const { result } = renderHook(() => useSettings());
 

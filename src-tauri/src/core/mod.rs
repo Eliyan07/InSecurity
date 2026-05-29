@@ -1,4 +1,5 @@
 pub mod behavior;
+pub mod external_media;
 pub mod feedback_store;
 pub mod firewall;
 /// Core detection pipeline modules

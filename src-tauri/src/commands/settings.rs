@@ -6,6 +6,8 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub real_time_protection: bool,
+    #[serde(default = "default_true")]
+    pub external_media_auto_scan: bool,
     pub auto_quarantine: bool,
     pub cache_size_mb: u32,
     pub cache_ttl_hours: u32,
@@ -92,6 +94,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         AppSettings {
             real_time_protection: true,
+            external_media_auto_scan: true,
             auto_quarantine: true,
             cache_size_mb: 256,
             cache_ttl_hours: 24,
@@ -246,6 +249,7 @@ pub async fn get_settings() -> Result<AppSettings, String> {
         let cfg = crate::config::Settings::load();
         Ok(AppSettings {
             real_time_protection: cfg.real_time_protection,
+            external_media_auto_scan: cfg.external_media_auto_scan,
             auto_quarantine: cfg.auto_quarantine,
             cache_size_mb: cfg.cache_size_mb,
             cache_ttl_hours: cfg.cache_ttl_hours,
@@ -310,6 +314,7 @@ pub async fn update_settings(app: tauri::AppHandle, _settings: AppSettings) -> R
 
         let cfg = crate::config::Settings {
             real_time_protection: _settings.real_time_protection,
+            external_media_auto_scan: _settings.external_media_auto_scan,
             auto_quarantine: _settings.auto_quarantine,
             cache_size_mb: _settings.cache_size_mb,
             cache_ttl_hours: _settings.cache_ttl_hours,
@@ -475,6 +480,29 @@ pub async fn set_auto_quarantine(enabled: bool) -> Result<(), String> {
         let mut cfg = crate::config::Settings::load();
         cfg.auto_quarantine = enabled;
         cfg.save();
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+#[tauri::command]
+pub async fn set_external_media_auto_scan(enabled: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let mut cfg = crate::config::Settings::load();
+        cfg.external_media_auto_scan = enabled;
+        cfg.save();
+
+        log_audit_event(
+            AuditEventType::SettingsChanged,
+            &format!(
+                "External media auto-scan {}",
+                if enabled { "enabled" } else { "disabled" }
+            ),
+            None,
+            None,
+        );
+
         Ok::<(), String>(())
     })
     .await
@@ -919,6 +947,7 @@ mod tests {
     fn test_app_settings_default_values() {
         let defaults = AppSettings::default();
         assert!(defaults.real_time_protection);
+        assert!(defaults.external_media_auto_scan);
         assert!(defaults.auto_quarantine);
         assert_eq!(defaults.scan_worker_count, 4);
         assert!(defaults.ransomware_protection);
@@ -964,6 +993,7 @@ mod tests {
         }"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!settings.real_time_protection);
+        assert!(settings.external_media_auto_scan);
         assert_eq!(settings.scan_worker_count, 4);
         assert!(settings.autostart);
     }
