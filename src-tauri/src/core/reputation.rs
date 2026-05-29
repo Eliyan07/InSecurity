@@ -339,7 +339,7 @@ mod tests {
         }"#;
         let (score, count, dets, names) = parse_vt_response(body);
         assert!(score > 0.5, "Score should be high for 40/70 malicious");
-        assert_eq!(count, 45); // 40 malicious + 5 suspicious
+        assert_eq!(count, 45);
         assert_eq!(dets.len(), 3);
         assert!(names.contains(&"Trojan.Win32.Agent".to_string()));
         assert!(names.contains(&"Win32:Malware-gen".to_string()));
@@ -369,15 +369,12 @@ mod tests {
             }
         }"#;
         let (_score, _count, _dets, names) = parse_vt_response(body);
-        // suggested_threat_label is inserted first but names get sorted,
-        // so check it exists rather than assuming position
         assert!(names.contains(&"ransomware.wannacry".to_string()));
         assert!(names.contains(&"Ransom.WannaCry".to_string()));
     }
 
     #[test]
     fn test_parse_vt_response_not_found() {
-        // VT returns 404 body - typically {"error": {"code": "NotFoundError"}}
         let body = r#"{"error": {"code": "NotFoundError"}}"#;
         let (score, count, dets, _names) = parse_vt_response(body);
         assert_eq!(score, 0.0);
@@ -404,7 +401,6 @@ mod tests {
             }
         }"#;
         let (_score, _count, _dets, names) = parse_vt_response(body);
-        // Should be deduplicated
         let count = names.iter().filter(|n| *n == "Trojan.Generic").count();
         assert_eq!(count, 1);
     }
@@ -418,7 +414,6 @@ mod tests {
     #[test]
     fn test_calculate_reputation_score_averaged() {
         let score = calculate_reputation_score(0.6, vec![0.4, 0.8]);
-        // (0.6 + 0.4 + 0.8) / 3 = 0.6
         assert!((score.overall_score - 0.6).abs() < 0.001);
     }
 

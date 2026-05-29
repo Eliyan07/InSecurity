@@ -290,7 +290,6 @@ pub async fn update_settings(app: tauri::AppHandle, _settings: AppSettings) -> R
     tokio::task::spawn_blocking(move || {
         let prev = crate::config::Settings::load();
 
-        // Update API keys in keyring if new values are provided (not the display mask)
         const MASK: &str = "••••••••";
         if let Some(ref k) = _settings.virustotal_api_key {
             if k != MASK {
@@ -334,16 +333,11 @@ pub async fn update_settings(app: tauri::AppHandle, _settings: AppSettings) -> R
         };
         cfg.save();
 
-        // Bug fix: apply live runtime side-effects for settings that take immediate effect,
-        // mirroring what the dedicated single-setting commands do.
-
-        // Real-time protection toggle
         if prev.real_time_protection != cfg.real_time_protection {
             crate::core::real_time::set_protection_disabled(!cfg.real_time_protection);
             update_tray_tooltip(&app, cfg.real_time_protection);
         }
 
-        // Ransomware thresholds
         if prev.ransomware_threshold != cfg.ransomware_threshold
             || prev.ransomware_window_seconds != cfg.ransomware_window_seconds
         {
@@ -353,7 +347,6 @@ pub async fn update_settings(app: tauri::AppHandle, _settings: AppSettings) -> R
             );
         }
 
-        // Cache reconfiguration
         if prev.cache_size_mb != cfg.cache_size_mb || prev.cache_ttl_hours != cfg.cache_ttl_hours {
             let entries_per_mb = 100usize;
             let max_entries = (cfg.cache_size_mb as usize) * entries_per_mb;
@@ -490,10 +483,8 @@ pub async fn set_auto_quarantine(enabled: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn set_real_time_protection(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    // Toggle the runtime flag immediately so watchers respond without restart
     crate::core::real_time::set_protection_disabled(!enabled);
 
-    // Update tray tooltip to reflect new state
     update_tray_tooltip(&app, enabled);
 
     tokio::task::spawn_blocking(move || {
@@ -502,7 +493,6 @@ pub async fn set_real_time_protection(app: tauri::AppHandle, enabled: bool) -> R
         cfg.real_time_protection = enabled;
         cfg.save();
 
-        // Audit log protection state changes (important security event)
         if was_enabled != enabled {
             log_audit_event(
                 if enabled {
@@ -525,7 +515,6 @@ pub async fn set_real_time_protection(app: tauri::AppHandle, enabled: bool) -> R
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
-/// Update the system tray tooltip to reflect current protection state
 fn update_tray_tooltip(app: &tauri::AppHandle, protection_enabled: bool) {
     if let Some(tray) = app.tray_by_id("main-tray") {
         let tooltip = protection_tray_tooltip(protection_enabled);
@@ -567,7 +556,7 @@ pub fn reconfigure_cache(max_size_mb: u32, ttl_hours: u32) -> Result<String, Str
     let new_config = crate::cache::cache_manager::CacheConfig {
         max_size: max_entries.max(1000),
         ttl_seconds,
-        eviction_interval_seconds: 3600, // Keep 1 hour eviction interval
+        eviction_interval_seconds: 3600,
     };
 
     if let Ok(mut cache) = crate::CACHE_MANAGER.lock() {
@@ -598,7 +587,6 @@ pub fn get_cache_stats() -> Result<crate::cache::cache_manager::CacheStats, Stri
     }
 }
 
-/// Clear the in-memory cache AND database verdicts so stale results don't re-sync
 #[tauri::command]
 pub fn clear_cache() -> Result<String, String> {
     let cleared_cache;
@@ -610,7 +598,6 @@ pub fn clear_cache() -> Result<String, String> {
         return Err("Failed to acquire cache lock".to_string());
     }
 
-    // Also clear DB verdicts so they don't re-sync back into the in-memory cache
     let mut cleared_db = 0u64;
     if let Ok(db) = crate::DB.lock() {
         if let Some(conn) = db.as_ref() {
@@ -630,10 +617,6 @@ pub fn clear_cache() -> Result<String, String> {
         cleared_cache, cleared_db
     ))
 }
-// ============================================================================
-// Ransomware Protection Settings
-// ============================================================================
-
 #[tauri::command]
 pub async fn set_ransomware_protection(enabled: bool) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
@@ -714,7 +697,6 @@ pub async fn add_protected_folder(folder: String) -> Result<(), String> {
                 None,
             );
 
-            // Dynamically add to the running file watcher so it takes effect immediately
             if let Err(e) = crate::core::real_time::add_watch_path(folder_path) {
                 log::warn!(
                     "Could not add watch for new protected folder (will apply on restart): {}",
@@ -722,7 +704,6 @@ pub async fn add_protected_folder(folder: String) -> Result<(), String> {
                 );
             }
 
-            // Deploy canary (honeypot) files in the new protected folder
             if let Err(e) = crate::core::real_time::deploy_canary_files_for_folder(&folder) {
                 log::warn!("Could not deploy canary files in {}: {}", folder, e);
             }
@@ -747,7 +728,6 @@ pub async fn remove_protected_folder(folder: String) -> Result<(), String> {
             None,
         );
 
-        // Dynamically remove from the running file watcher so it takes effect immediately
         let folder_path = std::path::Path::new(&folder);
         if let Err(e) = crate::core::real_time::remove_watch_path(folder_path) {
             log::warn!(
@@ -756,7 +736,6 @@ pub async fn remove_protected_folder(folder: String) -> Result<(), String> {
             );
         }
 
-        // Clean up canary (honeypot) files from the removed folder
         crate::core::real_time::remove_canary_files_for_folder(&folder);
 
         Ok::<(), String>(())
@@ -802,7 +781,6 @@ pub async fn set_ransomware_thresholds(threshold: u32, window_seconds: u32) -> R
         cfg.ransomware_window_seconds = window_seconds;
         cfg.save();
 
-        // Notify the real-time watcher to reload thresholds
         crate::core::real_time::reload_ransomware_thresholds(threshold, window_seconds);
 
         log_audit_event(
@@ -915,7 +893,6 @@ pub async fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), S
         autostart.disable().map_err(|e| e.to_string())?;
     }
 
-    // Persist to settings
     tokio::task::spawn_blocking(move || {
         let mut cfg = crate::config::Settings::load();
         cfg.autostart = enabled;
@@ -979,7 +956,6 @@ mod tests {
 
     #[test]
     fn test_app_settings_deserialize_with_defaults() {
-        // Missing optional fields should use defaults
         let json = r#"{
             "realTimeProtection": false,
             "autoQuarantine": false,
@@ -988,13 +964,12 @@ mod tests {
         }"#;
         let settings: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!settings.real_time_protection);
-        assert_eq!(settings.scan_worker_count, 4); // default_scan_worker_count
-        assert!(settings.autostart); // default_autostart
+        assert_eq!(settings.scan_worker_count, 4);
+        assert!(settings.autostart);
     }
 
     #[test]
     fn test_reconfigure_cache_minimum_floor() {
-        // max_size should be at least 1000 even with 0 input
         let entries_per_mb = 100;
         let max_entries = (0u32 as usize) * entries_per_mb;
         let floored = max_entries.max(1000);

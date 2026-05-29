@@ -842,7 +842,6 @@ mod tests {
         let result = mgr.verify_update_signature(b"hello", None);
         assert!(!result.verified);
         assert!(result.error.as_ref().unwrap().contains("No signature"));
-        // Hash should still be computed
         assert!(!result.hash.is_empty());
     }
 
@@ -857,7 +856,6 @@ mod tests {
     #[test]
     fn test_verify_signature_wrong_signature() {
         let mgr = make_manager();
-        // Valid base64 but wrong signature (64 bytes of zeros)
         let fake_sig = BASE64.encode([0u8; 64]);
         let result = mgr.verify_update_signature(b"data", Some(&fake_sig));
         assert!(!result.verified);
@@ -867,7 +865,6 @@ mod tests {
     #[test]
     fn test_verify_signature_bad_sig_length() {
         let mgr = make_manager();
-        // Valid base64, but not 64 bytes - invalid Ed25519 signature
         let short_sig = BASE64.encode([0u8; 32]);
         let result = mgr.verify_update_signature(b"data", Some(&short_sig));
         assert!(!result.verified);
