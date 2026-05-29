@@ -16,19 +16,16 @@ const EXTERNAL_MEDIA_POLL_INTERVAL: Duration = Duration::from_secs(3);
 static EXTERNAL_MEDIA_MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 static EXTERNAL_MEDIA_STATE: OnceLock<Mutex<ExternalMediaState>> = OnceLock::new();
 
-// Minimal monitor state: known removable drives plus one deferred scan.
 #[derive(Debug, Default)]
 struct ExternalMediaState {
     known_mounts: BTreeMap<String, String>,
     pending_scan: Option<(String, String)>,
 }
 
-// Lazily initialize shared monitor state the first time the feature is used.
 fn external_media_state() -> &'static Mutex<ExternalMediaState> {
     EXTERNAL_MEDIA_STATE.get_or_init(|| Mutex::new(ExternalMediaState::default()))
 }
 
-// Normalize mount paths so we can compare the same drive consistently across polls.
 fn normalize_mount_identity(path: &Path) -> String {
     let mut normalized = path.to_string_lossy().replace('/', "\\");
     while normalized.len() > 3 && normalized.ends_with('\\') {
@@ -37,7 +34,6 @@ fn normalize_mount_identity(path: &Path) -> String {
     normalized.to_lowercase()
 }
 
-// Read the current list of removable drives from sysinfo.
 fn collect_removable_mounts() -> BTreeMap<String, String> {
     Disks::new_with_refreshed_list()
         .list()
@@ -55,7 +51,6 @@ fn collect_removable_mounts() -> BTreeMap<String, String> {
         .collect()
 }
 
-// Keep an audit trail when a new removable drive is detected.
 fn log_external_media_detected(path: &str) {
     log_audit_event(
         AuditEventType::SettingsChanged,
@@ -65,7 +60,6 @@ fn log_external_media_detected(path: &str) {
     );
 }
 
-// Log when we successfully kick off a USB scan.
 fn log_external_media_scan_started(path: &str) {
     log_audit_event(
         AuditEventType::ScanStarted,
@@ -75,7 +69,6 @@ fn log_external_media_scan_started(path: &str) {
     );
 }
 
-// Try to start the external-media scan immediately using the existing scan command path.
 fn try_start_external_scan(app: &AppHandle, path: &str) {
     match scan::start_scan_internal(app.clone(), "external".to_string(), Some(path.to_string())) {
         Ok(()) => log_external_media_scan_started(path),
@@ -84,8 +77,7 @@ fn try_start_external_scan(app: &AppHandle, path: &str) {
     }
 }
 
-// Compare the latest removable-drive snapshot with the previous one.
-// Returns only newly attached drives and keeps one pending scan if needed.
+
 fn update_state(
     current_mounts: &BTreeMap<String, String>,
     protection_enabled: bool,
@@ -118,7 +110,6 @@ fn update_state(
     }
 }
 
-// Save one USB scan to retry later if another scan is already active.
 fn queue_pending_scan(identity: String, path: String) {
     match external_media_state().lock() {
         Ok(mut state) => {
@@ -130,7 +121,6 @@ fn queue_pending_scan(identity: String, path: String) {
     }
 }
 
-// Pull the deferred scan back out once the scanner is free again.
 fn take_pending_scan(current_mounts: &BTreeMap<String, String>) -> Option<String> {
     match external_media_state().lock() {
         Ok(mut state) => match state.pending_scan.take() {
@@ -144,7 +134,6 @@ fn take_pending_scan(current_mounts: &BTreeMap<String, String>) -> Option<String
     }
 }
 
-// Start the background polling loop once during app startup.
 pub fn start_external_media_monitor(app: AppHandle) -> Result<(), String> {
     if EXTERNAL_MEDIA_MONITOR_STARTED.swap(true, Ordering::SeqCst) {
         return Ok(());
@@ -165,14 +154,12 @@ pub fn start_external_media_monitor(app: AppHandle) -> Result<(), String> {
             let current_mounts = collect_removable_mounts();
             let attached = update_state(&current_mounts, protection_enabled);
 
-            // If a scan was deferred earlier, retry it before processing new drives.
             if protection_enabled && !scan::is_scanning() {
                 if let Some(path) = take_pending_scan(&current_mounts) {
                     try_start_external_scan(&app, &path);
                 }
             }
 
-            // Start scans for newly attached removable drives, or queue one if busy.
             if protection_enabled {
                 for (identity, path) in attached {
                     log_external_media_detected(&path);
