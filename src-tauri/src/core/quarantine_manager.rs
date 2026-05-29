@@ -69,13 +69,10 @@ mod tests {
             )
             .expect("quarantine should succeed");
 
-        // Verify encrypted file exists in vault
         assert!(Path::new(&result.entry.quarantine_path).exists());
-        // Verify meta file exists alongside it
         let meta_path = format!("{}.meta", result.entry.quarantine_path);
         assert!(Path::new(&meta_path).exists());
 
-        // Original should be gone
         assert!(!src.exists());
 
         qm.restore_file(&result.entry)
@@ -127,7 +124,6 @@ mod tests {
             )
             .expect("quarantine should succeed");
 
-        // Tamper with metadata: change original_path (should break AAD)
         let mut tampered_entry = result.entry.clone();
         tampered_entry.original_path = "/some/other/path.exe".to_string();
 
@@ -144,7 +140,6 @@ mod tests {
         let dir = tempdir().unwrap();
         let base = dir.path().to_str().unwrap();
 
-        // Create two files with same hash prefix
         let src1 = dir.path().join("file1.bin");
         let src2 = dir.path().join("file2.bin");
         std::fs::write(&src1, b"content-1").unwrap();
@@ -152,7 +147,6 @@ mod tests {
 
         let qm = QuarantineManager::new(base);
 
-        // Same first 8 chars of hash
         let r1 = qm
             .quarantine_file(
                 src1.to_str().unwrap(),
@@ -172,7 +166,6 @@ mod tests {
             )
             .expect("second quarantine should succeed");
 
-        // Vault paths should be different
         assert_ne!(r1.entry.quarantine_path, r2.entry.quarantine_path);
     }
 
@@ -195,11 +188,10 @@ mod tests {
                 "medium",
                 "test",
                 options,
-            )
-            .expect("quarantine with skip should succeed");
+        )
+        .expect("quarantine with skip should succeed");
 
         assert!(result.quarantine_success);
-        // Neutralization should be empty/default when skipped
         assert!(result.neutralization.processes_killed.is_empty());
         assert!(result.neutralization.persistence_removed.is_empty());
     }
@@ -215,15 +207,10 @@ struct QuarantineMeta {
     version: u8,
     alg: String,
     nonce_b64: String,
-    /// AAD used for authenticated encryption - binds ciphertext to file identity.
-    /// Format: "{file_hash}|{original_path}|{quarantined_at}"
-    /// If someone swaps vault files or tampers with metadata, decryption fails.
     aad_b64: Option<String>,
     created_at: i64,
 }
 
-/// Generate a unique vault filename that avoids collisions.
-/// Uses first 16 chars of hash + timestamp to be both identifiable and unique.
 fn make_vault_stem(file_hash: &str, quarantined_at: i64) -> String {
     let hash_prefix: String = file_hash
         .chars()
@@ -238,9 +225,6 @@ fn make_vault_stem(file_hash: &str, quarantined_at: i64) -> String {
     }
 }
 
-/// Build AAD string that binds ciphertext to the file's identity.
-/// This prevents vault file swaps - if someone moves encrypted blobs
-/// around or tampers with metadata, AES-GCM decryption will fail.
 fn build_aad(file_hash: &str, original_path: &str, quarantined_at: i64) -> Vec<u8> {
     format!("{}|{}|{}", file_hash, original_path, quarantined_at).into_bytes()
 }
@@ -268,11 +252,6 @@ impl QuarantineManager {
         qm
     }
 
-    /// Quarantine a file with full threat neutralization.
-    ///
-    /// For manual/dashboard quarantine, prefer `quarantine_file_with_options`
-    /// with `skip_neutralization()` to avoid the process-kill + persistence-cleanup
-    /// overhead (~500ms+ sleep + system enumeration).
     pub fn quarantine_file(
         &self,
         file_path: &str,
@@ -374,7 +353,6 @@ impl QuarantineManager {
         // STEP 2: QUARANTINE THE FILE
         // ============================================
 
-        // Wait for processes to release file handles after kill
         if neutralization.processes_killed.len() > 5 {
             std::thread::sleep(std::time::Duration::from_millis(1000));
         } else if !neutralization.processes_killed.is_empty() {
@@ -410,9 +388,6 @@ impl QuarantineManager {
 
         let quarantined_at = chrono::Utc::now().timestamp();
 
-        // FIX: Build AAD that binds ciphertext to file identity (hash + path + time).
-        // This prevents vault file swap attacks - if someone rearranges encrypted
-        // blobs or tampers with metadata, AES-GCM decryption will fail.
         let aad = build_aad(file_hash, file_path, quarantined_at);
 
         let encrypted_data = cipher
@@ -430,9 +405,6 @@ impl QuarantineManager {
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&self.vault_path));
 
-        // FIX: Use hash prefix + timestamp for unique vault filenames.
-        // Old approach used only first 8 chars of hash, which was collision-prone -
-        // two files with similar hashes would overwrite each other in the vault.
         let stem = make_vault_stem(file_hash, quarantined_at);
         let quarantine_filename = format!("{}.enc", stem);
         let final_path = vault_dir.join(&quarantine_filename);
@@ -457,11 +429,8 @@ impl QuarantineManager {
         fs::rename(&tmp_path, &final_path)?;
         let quarantine_path = final_path.to_string_lossy().to_string();
 
-        // FIX: Store AAD in metadata so restore can reconstruct it for decryption.
-        // Also use explicit "{stem}.enc.meta" path construction instead of
-        // with_extension() which can produce wrong results on edge-case filenames.
         let meta = QuarantineMeta {
-            version: 2, // bumped: now includes AAD
+            version: 2,
             alg: "AES-256-GCM".to_string(),
             nonce_b64: general_purpose::STANDARD.encode(nonce_bytes),
             aad_b64: Some(general_purpose::STANDARD.encode(&aad)),
@@ -483,7 +452,7 @@ impl QuarantineManager {
         }
 
         let entry = QuarantineEntry {
-            id: quarantined_at, // NOTE: caller should replace with DB-assigned id
+            id: quarantined_at,
             file_hash: file_hash.to_string(),
             original_path: file_path.to_string(),
             quarantine_path: quarantine_path.clone(),
@@ -559,11 +528,8 @@ impl QuarantineManager {
 
         let encrypted_content = fs::read(&quarantine_entry.quarantine_path)?;
 
-        // FIX: Derive meta path explicitly instead of using with_extension(),
-        // which can produce wrong results if quarantine_path has unusual extensions.
         let meta_path = PathBuf::from(format!("{}.meta", quarantine_entry.quarantine_path));
 
-        // Fallback for old-format entries: try with_extension if explicit path doesn't exist
         let meta_path = if meta_path.exists() {
             meta_path
         } else {
@@ -595,8 +561,6 @@ impl QuarantineManager {
         nb.copy_from_slice(&nonce_bytes);
         let nonce = aes_gcm::Nonce::from(nb);
 
-        // FIX: Decrypt with AAD if present (v2+ entries).
-        // For v1 entries (no AAD), fall back to plain decryption for backward compat.
         let decrypted = if let Some(ref aad_b64) = meta.aad_b64 {
             let aad = general_purpose::STANDARD.decode(aad_b64)?;
             cipher.decrypt(
@@ -609,7 +573,6 @@ impl QuarantineManager {
                 "Decryption failed (AAD mismatch - metadata or vault file may have been tampered with): {}", e
             ))?
         } else {
-            // v1 backward compatibility: no AAD was used
             cipher
                 .decrypt(&nonce, encrypted_content.as_ref())
                 .map_err(|e| format!("Decryption failed: {}", e))?
@@ -634,8 +597,6 @@ impl QuarantineManager {
             fs::write(orig_path, &decrypted)?;
         }
 
-        // Update entry metadata JSON if it exists
-        // Use the stem from quarantine_path filename for consistency
         if let Some(enc_name) = Path::new(&quarantine_entry.quarantine_path).file_stem() {
             let stem = enc_name.to_string_lossy();
             let meta_dir = Path::new(&self.metadata_path);
@@ -662,23 +623,19 @@ impl QuarantineManager {
     ) -> Result<(), Box<dyn std::error::Error>> {
         fs::remove_file(&quarantine_entry.quarantine_path)?;
 
-        // Clean up associated metadata files using the vault filename stem
         if let Some(enc_name) = Path::new(&quarantine_entry.quarantine_path).file_stem() {
             let stem = enc_name.to_string_lossy();
 
-            // Entry metadata JSON
             let meta_file = Path::new(&self.metadata_path).join(format!("{}.json", stem));
             if meta_file.exists() {
                 let _ = fs::remove_file(meta_file);
             }
         }
 
-        // Encryption metadata (sits alongside .enc file)
         let enc_meta = PathBuf::from(format!("{}.meta", quarantine_entry.quarantine_path));
         if enc_meta.exists() {
             let _ = fs::remove_file(&enc_meta);
         }
-        // Fallback: old format
         let enc_meta_old = Path::new(&quarantine_entry.quarantine_path).with_extension("enc.meta");
         if enc_meta_old.exists() {
             let _ = fs::remove_file(enc_meta_old);
@@ -709,22 +666,16 @@ impl QuarantineManager {
         Ok(entries)
     }
 
-    /// Public wrapper to pre-warm the encryption key cache at startup.
-    /// Calling this early avoids a ~500ms Argon2 KDF penalty on the first
-    /// quarantine or restore operation.
     pub fn warm_encryption_key(&self) -> Result<(), Box<dyn std::error::Error>> {
         let _ = self.get_or_create_encryption_key()?;
         Ok(())
     }
 
     fn get_or_create_encryption_key(&self) -> Result<[u8; 32], Box<dyn std::error::Error>> {
-        // Return cached key if available - avoids re-running Argon2 KDF
-        // (~500ms with 15 MB memory cost) on every quarantine operation.
         if let Some(key) = ENCRYPTION_KEY_CACHE.get() {
             return Ok(*key);
         }
 
-        // 1) Password-based KDF
         if let Ok(pw) = std::env::var("QUARANTINE_MASTER_PASSWORD") {
             let salt_file = Path::new(&self.metadata_path).join("master_salt");
             let salt_bytes: Vec<u8> = fs::read(&salt_file).unwrap_or_else(|_| {
@@ -755,7 +706,6 @@ impl QuarantineManager {
             return Ok(key);
         }
 
-        // 2) OS keyring or CI-friendly file fallback
         let disable_keyring = std::env::var("QUARANTINE_DISABLE_KEYRING")
             .map(|v| v == "1")
             .unwrap_or(false);

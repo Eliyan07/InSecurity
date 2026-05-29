@@ -168,7 +168,7 @@ impl ThreatNeutralizer {
         }
 
         let mut pids_to_kill: Vec<u32> = visited.into_iter().collect();
-        pids_to_kill.sort_by(|a, b| b.cmp(a)); // Reverse sort to try children first
+        pids_to_kill.sort_by(|a, b| b.cmp(a));
 
         for pid in pids_to_kill {
             if let Some(proc) = all_processes.iter().find(|p| p.pid == pid) {
@@ -628,12 +628,10 @@ mod tests {
         });
         result.warnings.push("test warning".to_string());
 
-        // success should still be true (no errors)
         assert!(result.success);
         assert_eq!(result.processes_killed.len(), 1);
         assert_eq!(result.warnings.len(), 1);
 
-        // Roundtrip serialization
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: NeutralizationResult = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.processes_killed.len(), 1);

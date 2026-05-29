@@ -108,7 +108,7 @@ pub async fn quarantine_file_by_path(
         let db_id = if let Ok(guard) = crate::DB.lock() {
             if let Some(ref conn) = *guard {
                 let record = crate::database::models::QuarantineRecord {
-                    id: 0, // DB assigns autoincrement
+                    id: 0,
                     file_hash: entry.entry.file_hash.clone(),
                     original_path: entry.entry.original_path.clone(),
                     quarantine_path: entry.entry.quarantine_path.clone(),
@@ -126,7 +126,7 @@ pub async fn quarantine_file_by_path(
                     Ok(()) => conn.last_insert_rowid(),
                     Err(e) => {
                         log::warn!("Failed to insert quarantine record to DB: {}", e);
-                        entry.entry.id // fallback to manager id
+                        entry.entry.id
                     }
                 }
             } else {
@@ -151,7 +151,7 @@ pub async fn quarantine_file_by_path(
         );
 
         Ok(QuarantineFileInfo {
-            id: db_id, // FIX: return DB id, not timestamp
+            id: db_id,
             file_hash: entry.entry.file_hash,
             original_path: entry.entry.original_path,
             verdict: entry.entry.verdict,
@@ -724,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_validate_hash_wrong_length() {
-        let result = validate_hash("abcdef1234"); // 10 chars = not 32/40/64
+        let result = validate_hash("abcdef1234");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid hash length"));
     }
@@ -783,7 +783,6 @@ mod tests {
             file_type: "txt".to_string(),
         };
         let json = serde_json::to_string(&info).unwrap();
-        // Should use camelCase (serde rename_all)
         assert!(json.contains("fileHash"));
         assert!(json.contains("originalPath"));
         assert!(json.contains("threatLevel"));
