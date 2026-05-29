@@ -1,5 +1,3 @@
-//! Stage 3: Reputation Scoring
-//! VirusTotal API integration, threat intelligence aggregation
 use crate::database::queries::DatabaseQueries;
 use crate::with_db;
 use chrono::Utc;
@@ -21,8 +19,8 @@ pub struct ReputationScore {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VtDetection {
     pub engine_name: String,
-    pub category: String,       // "malicious", "suspicious", "undetected"
-    pub result: Option<String>, // Threat name if detected
+    pub category: String,
+    pub result: Option<String>,
 }
 
 fn parse_vt_response(body: &str) -> (f64, u32, Vec<VtDetection>, Vec<String>) {
@@ -33,7 +31,6 @@ fn parse_vt_response(body: &str) -> (f64, u32, Vec<VtDetection>, Vec<String>) {
     let mut parsed_vt_structure = false;
 
     if let Ok(val) = serde_json::from_str::<JsonValue>(body) {
-        // VT API v3 structure: data.attributes.last_analysis_results
         if let Some(data) = val.get("data") {
             if let Some(attrs) = data.get("attributes") {
                 parsed_vt_structure = true;
@@ -63,7 +60,6 @@ fn parse_vt_response(body: &str) -> (f64, u32, Vec<VtDetection>, Vec<String>) {
                     }
                 }
 
-                // Parse individual engine results
                 if let Some(results) = attrs.get("last_analysis_results") {
                     if let Some(obj) = results.as_object() {
                         for (engine, result) in obj {
@@ -94,7 +90,6 @@ fn parse_vt_response(body: &str) -> (f64, u32, Vec<VtDetection>, Vec<String>) {
                     }
                 }
 
-                // Also check popular_threat_classification for better naming
                 if let Some(classification) = attrs.get("popular_threat_classification") {
                     if let Some(labels) = classification.get("suggested_threat_label") {
                         if let Some(label) = labels.as_str() {
@@ -105,9 +100,6 @@ fn parse_vt_response(body: &str) -> (f64, u32, Vec<VtDetection>, Vec<String>) {
             }
         }
 
-        // Fallback heuristic: only if we couldn't parse the expected VT API structure
-        // (e.g., non-standard response format). Do NOT apply this when we successfully
-        // parsed data.attributes but detections were empty - that means the file is clean.
         if !parsed_vt_structure && detections.is_empty() {
             let s = val.to_string().to_lowercase();
             if s.contains("malic") || s.contains("positiv") || s.contains("threat") {
@@ -214,9 +206,6 @@ async fn fetch_and_persist_remote(
     })
 }
 
-/// Query reputation information for a file hash.
-/// First consult the local DB cache (external_reports). If a recent result exists return it.
-/// Otherwise fetch an external report, persist, and return the derived reputation.
 pub async fn query_reputation(
     file_hash: &str,
 ) -> Result<ReputationScore, Box<dyn std::error::Error>> {

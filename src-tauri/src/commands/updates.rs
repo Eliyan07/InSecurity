@@ -2,8 +2,6 @@ use crate::core::{
     threat_feed::ThreatEntry,
     update_manager::{MalwareBazaarEntry, UpdateResult, UpdateStats, UPDATE_MANAGER},
 };
-/// Update Manager Commands
-/// Tauri commands for threat intelligence updates
 use tauri::command;
 use tauri::Emitter;
 
@@ -26,7 +24,6 @@ trait Pipe: Sized {
 }
 impl<T> Pipe for T {}
 
-/// Trigger a full update from all sources
 #[command]
 pub async fn run_threat_update(app_handle: tauri::AppHandle) -> Result<Vec<UpdateResult>, String> {
     let _ = app_handle.emit(
@@ -36,14 +33,10 @@ pub async fn run_threat_update(app_handle: tauri::AppHandle) -> Result<Vec<Updat
         }),
     );
 
-    // We cannot hold the Mutex guard across an async await point, so we release it
-    // immediately after confirming the global is available, then run the update on a
-    // fresh instance (which re-reads the API key from disk just like the global would).
     {
         let _check = UPDATE_MANAGER
             .lock()
             .map_err(|e| format!("Failed to lock update manager: {}", e))?;
-        // guard dropped here
     }
 
     let manager = crate::core::update_manager::UpdateManager::new();
@@ -52,7 +45,6 @@ pub async fn run_threat_update(app_handle: tauri::AppHandle) -> Result<Vec<Updat
     let total_added: usize = results.iter().map(|r| r.entries_added).sum();
     let success_count = results.iter().filter(|r| r.success).count();
 
-    // Write the completion timestamp back into the global so get_update_stats() reflects it.
     if let Ok(mut global) = UPDATE_MANAGER.lock() {
         global.mark_all_sources_updated();
     }
@@ -173,8 +165,6 @@ pub async fn add_to_blacklist(entries: Vec<MalwareBazaarEntry>) -> Result<Update
     })
 }
 
-/// Check if a hash exists in known malware databases
-/// Requires MALWAREBAZAAR_API_KEY environment variable to be set
 #[command]
 pub async fn check_hash_malwarebazaar(hash: String) -> Result<Option<MalwareBazaarEntry>, String> {
     let api_key = crate::config::settings::get_api_key("malwarebazaar_api_key")

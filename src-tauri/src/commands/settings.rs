@@ -1,5 +1,4 @@
 use crate::core::tamper_protection::{log_audit_event, AuditEventType};
-/// Settings commands
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -263,7 +262,6 @@ pub async fn get_settings() -> Result<AppSettings, String> {
             auto_block_malware_network: cfg.auto_block_malware_network,
             network_monitor_interval_secs: cfg.network_monitor_interval_secs,
             language: cfg.language,
-            // Indicate to the frontend whether each key is set (without revealing it)
             virustotal_api_key: crate::config::settings::get_api_key("virustotal_api_key")
                 .or_else(|| {
                     std::env::var("VIRUSTOTAL_API_KEY")
@@ -286,7 +284,6 @@ pub async fn get_settings() -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub async fn update_settings(app: tauri::AppHandle, _settings: AppSettings) -> Result<(), String> {
-    // Validate scan_worker_count (same rules as set_scan_worker_count)
     if !(1..=16).contains(&_settings.scan_worker_count) {
         return Err("Worker count must be between 1 and 16".to_string());
     }

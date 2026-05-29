@@ -7,11 +7,8 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::fs;
-/// Update Manager Module
-/// Handles auto-updates for threat intelligence from MalwareBazaar and other sources
 use std::path::PathBuf;
 
-/// Public key for verifying update signatures (Ed25519)
 const UPDATE_PUBLIC_KEY_B64: &str = "MCowBQYDK2VwAyEAGVLkZK5XYS0mj6tYk8nxMWCH9M3jKH6wMOqPQYtJTEs=";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,9 +100,6 @@ pub struct UpdateManager {
     client: Client,
 
     sources: Vec<UpdateSource>,
-    /// MalwareBazaar API key (required for API access)
-    /// Set via MALWAREBAZAAR_API_KEY environment variable
-    /// Get a free key at: https://auth.abuse.ch/
     api_key: Option<String>,
 }
 
@@ -296,7 +290,6 @@ impl UpdateManager {
         &self,
         limit: u32,
     ) -> Result<Vec<MalwareBazaarEntry>, Box<dyn std::error::Error + Send + Sync>> {
-        // Check rate limit before making request
         if let Some(wait_secs) = MALWARE_BAZAAR_RATE_LIMITER.acquire() {
             log::warn!(
                 "MalwareBazaar rate limit exceeded, need to wait {} seconds",
@@ -337,7 +330,7 @@ impl UpdateManager {
                     e,
                     &body[..body.len().min(200)]
                 );
-                return Ok(Vec::new()); // Return empty list on parse error
+                return Ok(Vec::new());
             }
         };
 
@@ -350,7 +343,7 @@ impl UpdateManager {
             }
             status => {
                 log::warn!("MalwareBazaar API returned status: {}", status);
-                Ok(Vec::new()) // Don't fail, just return empty
+                Ok(Vec::new())
             }
         }
     }
@@ -553,9 +546,6 @@ impl UpdateManager {
         Ok(new_count)
     }
 
-    /// Record the current timestamp as `last_updated` on every configured source.
-    /// Called by the commands layer after a successful update so that
-    /// `get_update_stats()` returns a non-null `last_update` value.
     pub fn mark_all_sources_updated(&mut self) {
         let now = Utc::now().timestamp();
         for source in &mut self.sources {
@@ -622,7 +612,6 @@ impl UpdateManager {
 
         log::info!("Starting initial threat database seed from MalwareBazaar...");
 
-        // 1. Fetch maximum recent samples (1000 - API limit)
         log::info!("Fetching 1000 recent malware samples...");
         match self.fetch_malwarebazaar_recent(1000).await {
             Ok(entries) => {
@@ -636,10 +625,8 @@ impl UpdateManager {
             }
         }
 
-        // Rate limit between API calls
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-        // 2. Fetch major malware families (100 each = ~1500 more)
         let major_families = [
             "AgentTesla",
             "Emotet",
@@ -677,11 +664,9 @@ impl UpdateManager {
                 }
             }
 
-            // Rate limiting - be nice to the API
             tokio::time::sleep(std::time::Duration::from_millis(750)).await;
         }
 
-        // 3. Fetch by common malware tags
         let tags = ["exe", "dll", "ransomware", "trojan", "stealer"];
 
         for tag in tags {
