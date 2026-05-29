@@ -146,14 +146,12 @@ describe('Scanner', () => {
   it('restores the last completed external media scan when the scanner tab opens later', async () => {
     vi.mocked(api.getScanStatus).mockResolvedValue({
       ...baseStatus,
-      lastCompletedSummary: {
-        totalFiles: 2,
-        cleanCount: 1,
-        suspiciousCount: 0,
-        malwareCount: 1,
-        elapsedSeconds: 3,
-        scanType: 'external',
-      },
+      totalFiles: 2,
+      cleanCount: 1,
+      suspiciousCount: 0,
+      malwareCount: 1,
+      elapsedSeconds: 0,
+      scanType: 'external',
     });
     vi.mocked(api.getLastManualScanThreats).mockResolvedValue([
       {

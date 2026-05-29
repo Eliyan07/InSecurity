@@ -106,13 +106,6 @@ const getInProgressScanLabel = (
   }
 };
 
-const getRestorableCompletedSummary = (
-  status: ScanStatus | null | undefined,
-): ScanSummary | null => {
-  if (!status || status.isScanning) return null;
-  return status.lastCompletedSummary ?? null;
-};
-
 // Helper to map scan-result event payload to ScanResult
 const mapPayloadToResult = (payload: Record<string, unknown>): ScanResult => {
   const filePath = (payload['file_path'] as string) ?? (payload['filePath'] as string) ?? '';
@@ -462,10 +455,17 @@ export const Scanner: React.FC<ScannerProps> = ({ autoQuarantine }) => {
   }, [forceCompleted, hydrateThreatsForCompletedScan]);
 
   useEffect(() => {
-    if (scanSummary) return;
+    if (scanSummary || scanStatus?.isScanning) return;
+    if (scanStatus?.scanType !== 'external' || scanStatus.totalFiles === 0) return;
 
-    const restoredSummary = getRestorableCompletedSummary(scanStatus);
-    if (!restoredSummary) return;
+    const restoredSummary: ScanSummary = {
+      totalFiles: scanStatus.totalFiles,
+      cleanCount: scanStatus.cleanCount,
+      suspiciousCount: scanStatus.suspiciousCount,
+      malwareCount: scanStatus.malwareCount,
+      elapsedSeconds: scanStatus.elapsedSeconds,
+      scanType: scanStatus.scanType,
+    };
 
     setScanSummary(restoredSummary);
     void hydrateThreatsForCompletedScan(restoredSummary);
