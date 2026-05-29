@@ -109,6 +109,46 @@ describe('useRealtimeScan', () => {
     expect(result.current.realtimeResults[0].verdict).toBe('Malware');
   });
 
+  it('collapses transient duplicate threats on mount when a stable path exists', async () => {
+    const mockThreats = [
+      {
+        id: 1,
+        file_hash: 'samehash',
+        file_path: 'C:\\Users\\123\\AppData\\Local\\Temp\\38dd4322.tmp',
+        verdict: 'Malware',
+        confidence: 0.99,
+        threat_level: 'HIGH',
+        threat_name: 'EICAR Test File',
+        scanned_at: 1700000000,
+      },
+      {
+        id: 2,
+        file_hash: 'samehash',
+        file_path: 'C:\\Users\\123\\Downloads\\eicar.com',
+        verdict: 'Malware',
+        confidence: 0.99,
+        threat_level: 'HIGH',
+        threat_name: 'EICAR Test File',
+        scanned_at: 1700000001,
+      },
+    ];
+
+    mockSafeInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_scan_status') return Promise.resolve(mockScanStatus);
+      if (cmd === 'get_active_threats') return Promise.resolve(mockThreats);
+      return Promise.resolve(null);
+    });
+
+    const { result } = renderHook(() => useRealtimeScan());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(result.current.realtimeResults).toHaveLength(1);
+    expect(result.current.realtimeResults[0].filePath).toBe('C:\\Users\\123\\Downloads\\eicar.com');
+  });
+
   it('getScanStatus fetches and updates status', async () => {
     const { result } = renderHook(() => useRealtimeScan());
 
@@ -339,6 +379,55 @@ describe('useRealtimeScan', () => {
       });
     });
     expect(result.current.realtimeResults).toHaveLength(2);
+  });
+
+  it('collapses transient duplicate realtime events when a stable path exists', async () => {
+    mockSafeInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'get_scan_status') return Promise.resolve(mockScanStatus);
+      if (cmd === 'get_active_threats') return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+
+    let listenerCallback: ((event: { payload: Record<string, unknown> }) => void) | null = null;
+    mockSafeListen.mockImplementation((_event: string, cb: any) => {
+      listenerCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    const { result } = renderHook(() => useRealtimeScan());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    await act(async () => {
+      listenerCallback!({
+        payload: {
+          file_hash: 'samehash',
+          file_path: 'C:\\Users\\123\\AppData\\Local\\Temp\\38dd4322.tmp',
+          verdict: 'Malware',
+          confidence: 0.99,
+          threat_level: 'HIGH',
+          scan_time_ms: 25,
+        },
+      });
+    });
+    expect(result.current.realtimeResults).toHaveLength(1);
+
+    await act(async () => {
+      listenerCallback!({
+        payload: {
+          file_hash: 'samehash',
+          file_path: 'C:\\Users\\123\\Downloads\\eicar.com',
+          verdict: 'Malware',
+          confidence: 0.99,
+          threat_level: 'HIGH',
+          scan_time_ms: 30,
+        },
+      });
+    });
+
+    expect(result.current.realtimeResults).toHaveLength(1);
+    expect(result.current.realtimeResults[0].filePath).toBe('C:\\Users\\123\\Downloads\\eicar.com');
   });
 
   it('skips results with missing filePath or fileHash', async () => {

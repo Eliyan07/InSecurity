@@ -2,11 +2,69 @@ use crate::core::utils::is_dev_build_artifact_path;
 use crate::database::DatabaseQueries;
 /// Database commands exposed to frontend
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 fn normalize_path_identity(path: &str) -> String {
     path.replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase()
+}
+
+fn is_transient_threat_path(path: &str) -> bool {
+    let normalized = normalize_path_identity(path);
+    let file_name = normalized.rsplit('\\').next().unwrap_or(&normalized);
+
+    normalized.contains("\\appdata\\local\\temp\\")
+        || normalized.contains("\\temp\\")
+        || normalized.contains("\\tmp\\")
+        || file_name.ends_with(".tmp")
+        || file_name.ends_with(".temp")
+        || file_name.ends_with(".part")
+        || file_name.ends_with(".crdownload")
+        || file_name.ends_with(".download")
+}
+
+fn collapse_transient_hash_duplicates(records: Vec<VerdictRecord>) -> Vec<VerdictRecord> {
+    let mut grouped: HashMap<String, Vec<(usize, bool)>> = HashMap::new();
+
+    for (idx, record) in records.iter().enumerate() {
+        grouped
+            .entry(record.file_hash.trim().to_lowercase())
+            .or_default()
+            .push((idx, is_transient_threat_path(&record.file_path)));
+    }
+
+    let mut keep = vec![true; records.len()];
+
+    for entries in grouped.values() {
+        if entries.len() <= 1 {
+            continue;
+        }
+
+        let stable_indices: Vec<usize> = entries
+            .iter()
+            .filter_map(|(idx, is_transient)| (!*is_transient).then_some(*idx))
+            .collect();
+
+        if stable_indices.is_empty() {
+            for (idx, _) in entries.iter().skip(1) {
+                keep[*idx] = false;
+            }
+            continue;
+        }
+
+        for (idx, is_transient) in entries {
+            if *is_transient {
+                keep[*idx] = false;
+            }
+        }
+    }
+
+    records
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, record)| keep[idx].then_some(record))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,10 +121,12 @@ fn query_active_threats(conn: &rusqlite::Connection) -> Result<Vec<VerdictRecord
         })
         .map_err(|e| format!("Query map error: {}", e))?;
 
-    Ok(records
+    let records: Vec<VerdictRecord> = records
         .filter_map(|r| r.ok())
         .filter(|r| !is_dev_build_artifact_path(&r.file_path))
-        .collect())
+        .collect();
+
+    Ok(collapse_transient_hash_duplicates(records))
 }
 
 #[tauri::command]
@@ -736,6 +796,127 @@ mod tests {
         let threats = query_active_threats(&conn).unwrap();
 
         assert_eq!(threats.len(), 2);
+    }
+
+    #[test]
+    fn test_query_active_threats_drops_transient_duplicate_when_stable_path_exists() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE verdicts (
+                id INTEGER PRIMARY KEY,
+                file_hash TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                threat_level TEXT NOT NULL,
+                threat_name TEXT,
+                scanned_at INTEGER NOT NULL
+            );
+            CREATE TABLE quarantine (
+                original_path TEXT NOT NULL,
+                permanently_deleted INTEGER NOT NULL DEFAULT 0,
+                restored_at INTEGER
+            );",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                1_i64,
+                "samehash",
+                r"C:\Users\123\AppData\Local\Temp\38dd4322.tmp",
+                "Malware",
+                0.99_f64,
+                "HIGH",
+                Some("EICAR Test File".to_string()),
+                101_i64
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                2_i64,
+                "samehash",
+                r"C:\Users\123\Downloads\eicar.com",
+                "Malware",
+                0.99_f64,
+                "HIGH",
+                Some("EICAR Test File".to_string()),
+                102_i64
+            ],
+        )
+        .unwrap();
+
+        let threats = query_active_threats(&conn).unwrap();
+
+        assert_eq!(threats.len(), 1);
+        assert_eq!(threats[0].file_path, r"C:\Users\123\Downloads\eicar.com");
+    }
+
+    #[test]
+    fn test_query_active_threats_collapses_multiple_transient_paths_for_same_hash() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE verdicts (
+                id INTEGER PRIMARY KEY,
+                file_hash TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                threat_level TEXT NOT NULL,
+                threat_name TEXT,
+                scanned_at INTEGER NOT NULL
+            );
+            CREATE TABLE quarantine (
+                original_path TEXT NOT NULL,
+                permanently_deleted INTEGER NOT NULL DEFAULT 0,
+                restored_at INTEGER
+            );",
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                1_i64,
+                "samehash",
+                r"C:\Users\123\AppData\Local\Temp\first.tmp",
+                "Suspicious",
+                0.76_f64,
+                "MEDIUM",
+                Some("Suspicious.Activity".to_string()),
+                101_i64
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO verdicts (id, file_hash, file_path, verdict, confidence, threat_level, threat_name, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                2_i64,
+                "samehash",
+                r"C:\Users\123\AppData\Local\Temp\second.tmp",
+                "Suspicious",
+                0.80_f64,
+                "MEDIUM",
+                Some("Suspicious.Activity".to_string()),
+                102_i64
+            ],
+        )
+        .unwrap();
+
+        let threats = query_active_threats(&conn).unwrap();
+
+        assert_eq!(threats.len(), 1);
+        assert_eq!(
+            threats[0].file_path,
+            r"C:\Users\123\AppData\Local\Temp\second.tmp"
+        );
     }
 
     // =========================================================================

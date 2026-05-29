@@ -6,6 +6,62 @@ import { parseVerdict } from '../utils/verdict';
 const normalizePathKey = (filePath: string) =>
   filePath.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 
+const isTransientThreatPath = (filePath: string) => {
+  const normalized = normalizePathKey(filePath);
+  const fileName = normalized.split('\\').filter(Boolean).pop() ?? normalized;
+
+  return normalized.includes('\\appdata\\local\\temp\\')
+    || normalized.includes('\\temp\\')
+    || normalized.includes('\\tmp\\')
+    || fileName.endsWith('.tmp')
+    || fileName.endsWith('.temp')
+    || fileName.endsWith('.part')
+    || fileName.endsWith('.crdownload')
+    || fileName.endsWith('.download');
+};
+
+const collapseThreatResults = (results: ScanResult[]): ScanResult[] => {
+  const latestByPath = new Map<string, ScanResult>();
+  for (const result of results) {
+    const pathKey = normalizePathKey(result.filePath);
+    if (!latestByPath.has(pathKey)) {
+      latestByPath.set(pathKey, result);
+    }
+  }
+
+  const uniqueByPath = Array.from(latestByPath.values());
+  const groupedByHash = new Map<string, ScanResult[]>();
+
+  for (const result of uniqueByPath) {
+    const hashKey = result.fileHash.trim().toLowerCase() || `${result.threatId}:${normalizePathKey(result.filePath)}`;
+    const group = groupedByHash.get(hashKey);
+    if (group) group.push(result);
+    else groupedByHash.set(hashKey, [result]);
+  }
+
+  const keptPathKeys = new Set<string>();
+
+  for (const group of groupedByHash.values()) {
+    if (group.length === 1) {
+      keptPathKeys.add(normalizePathKey(group[0].filePath));
+      continue;
+    }
+
+    const stable = group.filter(result => !isTransientThreatPath(result.filePath));
+
+    if (stable.length > 0) {
+      for (const result of stable) {
+        keptPathKeys.add(normalizePathKey(result.filePath));
+      }
+      continue;
+    }
+
+    keptPathKeys.add(normalizePathKey(group[0].filePath));
+  }
+
+  return uniqueByPath.filter(result => keptPathKeys.has(normalizePathKey(result.filePath)));
+};
+
 export function useRealtimeScan(activeNav?: string) {
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [realtimeResults, setRealtimeResults] = useState<ScanResult[]>([]);
@@ -61,18 +117,15 @@ export function useRealtimeScan(activeNav?: string) {
           
           setRealtimeResults(prev => {
             const mappedPathKey = normalizePathKey(mapped.filePath);
-            // Deduplicate by normalized file path only. Same content in a different
-            // folder should remain visible as a separate threat instance.
             const existingByPath = prev.findIndex(r => normalizePathKey(r.filePath) === mappedPathKey);
             if (existingByPath !== -1) {
-              // Replace existing entry with newer scan result
               const next = [...prev];
               next.splice(existingByPath, 1);
-              return [mapped, ...next].slice(0, MAX_RESULTS);
+              return collapseThreatResults([mapped, ...next]).slice(0, MAX_RESULTS);
             }
             const next = [mapped, ...prev];
             if (next.length > MAX_RESULTS) next.length = MAX_RESULTS;
-            return next;
+            return collapseThreatResults(next);
           });
         });
         
@@ -154,8 +207,7 @@ export function useRealtimeScan(activeNav?: string) {
           };
         });
       
-      // Replace all results with the fresh data from DB
-      setRealtimeResults(historicalResults);
+      setRealtimeResults(collapseThreatResults(historicalResults));
     } catch (err) {
       console.warn('[useRealtimeScan] Could not load historical verdicts:', err);
     }
